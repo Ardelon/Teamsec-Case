@@ -1,0 +1,29 @@
+<div id="status-panel" class="border rounded p-4 bg-slate-50">
+    <p class="font-medium">Job: {{ job.job_id }}</p>
+    <p>Status: <span class="font-semibold">{{ job.status }}</span></p>
+    <p>Progress: {{ job.progress_percentage }}%</p>
+    <p>Processed rows: {{ job.processed_rows }}</p>
+    {% if job.errors %}
+    <div class="mt-2">
+        <p class="text-sm font-medium text-red-600">Errors ({{ job.errors|length }})</p>
+        <ul class="text-xs text-red-500 list-disc ml-4">
+            {% for err in job.errors|slice:":5" %}
+            <li>Row {{ err.row_number }} / {{ err.field }}: {% if err.message %}{{ err.message }}{% else %}{{ err.error_message }}{% endif %}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+
+{% if job.status == "QUEUED" or job.status == "PROCESSING" %}
+<div hx-get="/api/sync/status/{{ job.job_id }}"
+     hx-trigger="every 3s"
+     hx-target="#status-display"
+     hx-swap="innerHTML"
+     hx-headers='js:{"Authorization": "Bearer " + localStorage.getItem("jwt_token")}'>
+</div>
+{% else %}
+<script>
+    document.body.dispatchEvent(new Event('syncComplete'));
+</script>
+{% endif %}

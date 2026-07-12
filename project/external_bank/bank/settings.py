@@ -35,3 +35,17 @@ USE_I18N = True
 USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+STORAGE_ROOT = BASE_DIR / "storage"
+STREAM_MULTIPLIER = int(os.environ.get("BANK_STREAM_MULTIPLIER", "10"))
+STREAM_SIZE_LIMIT_BYTES = int(
+    os.environ.get("BANK_STREAM_SIZE_LIMIT_BYTES", str(100 * 1024 * 1024))
+)
+
+REST_FRAMEWORK = {
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+        "rest_framework.parsers.MultiPartParser",
+        "rest_framework.parsers.FormParser",
+    ],
+}

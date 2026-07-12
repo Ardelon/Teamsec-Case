@@ -8,3 +8,4 @@ target/
 dist/
 *.egg-info/
 .DS_Store
+external_bank/storage/

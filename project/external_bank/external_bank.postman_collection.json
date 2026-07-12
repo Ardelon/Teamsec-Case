@@ -1,0 +1,236 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "External Bank Simulation API",
+    "description": "Postman collection for the external_bank Django service.\n\nBase URL defaults to http://localhost:8080 (docker-compose external_bank_sim).\n\nValid tenant_id values: BANK001, BANK002, BANK003\nValid loan_type values: RETAIL, COMMERCIAL\n\nUpload expects semicolon-separated CSV files for credit_file and payment_plan_file.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "tenant_id",
+      "value": "BANK001"
+    },
+    {
+      "key": "loan_type",
+      "value": "RETAIL"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/",
+              "host": ["{{base_url}}"],
+              "path": ["health", ""]
+            },
+            "description": "Returns service health status."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"ok\",\n  \"service\": \"external_bank_sim\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "Upload Portfolio",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}",
+                  "description": "BANK001 | BANK002 | BANK003",
+                  "type": "text"
+                },
+                {
+                  "key": "loan_type",
+                  "value": "{{loan_type}}",
+                  "description": "RETAIL | COMMERCIAL",
+                  "type": "text"
+                },
+                {
+                  "key": "credit_file",
+                  "description": "Semicolon-separated credits CSV",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "payment_plan_file",
+                  "description": "Semicolon-separated payments CSV",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/bank/upload",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bank", "upload"]
+            },
+            "description": "Upload credit and payment plan CSV files for a tenant/loan type pair.\n\nFiles are stored at:\nstorage/{tenant_id}/{loan_type}/credits.csv\nstorage/{tenant_id}/{loan_type}/payments.csv"
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "status": "Created",
+              "code": 201,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": \"success\",\n  \"tenant_id\": \"BANK001\",\n  \"loan_type\": \"RETAIL\",\n  \"uploaded_files\": [\n    {\n      \"type\": \"credit_data\",\n      \"filename\": \"credits.csv\",\n      \"size_bytes\": 1024500\n    },\n    {\n      \"type\": \"payment_plan_data\",\n      \"filename\": \"payments.csv\",\n      \"size_bytes\": 4501200\n    }\n  ],\n  \"timestamp\": \"2026-07-12T11:20:00Z\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Export",
+      "item": [
+        {
+          "name": "Export Credits",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bank/export/credits?tenant_id={{tenant_id}}&loan_type={{loan_type}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bank", "export", "credits"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}",
+                  "description": "Required"
+                },
+                {
+                  "key": "loan_type",
+                  "value": "{{loan_type}}",
+                  "description": "Required"
+                }
+              ]
+            },
+            "description": "Streams credits.csv once for the given tenant and loan type."
+          },
+          "response": []
+        },
+        {
+          "name": "Export Credits (multiply=true)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bank/export/credits?tenant_id={{tenant_id}}&loan_type={{loan_type}}&multiply=true",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bank", "export", "credits"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}",
+                  "description": "Required"
+                },
+                {
+                  "key": "loan_type",
+                  "value": "{{loan_type}}",
+                  "description": "Required"
+                },
+                {
+                  "key": "multiply",
+                  "value": "true",
+                  "description": "Loops file content to simulate scale"
+                }
+              ]
+            },
+            "description": "Streams multiplied credits CSV output using server-side multiplier and size limits."
+          },
+          "response": []
+        },
+        {
+          "name": "Export Payments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bank/export/payments?tenant_id={{tenant_id}}&loan_type={{loan_type}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bank", "export", "payments"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}",
+                  "description": "Required"
+                },
+                {
+                  "key": "loan_type",
+                  "value": "{{loan_type}}",
+                  "description": "Required"
+                }
+              ]
+            },
+            "description": "Streams payments.csv once for the given tenant and loan type."
+          },
+          "response": []
+        },
+        {
+          "name": "Export Payments (multiply=true)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/bank/export/payments?tenant_id={{tenant_id}}&loan_type={{loan_type}}&multiply=true",
+              "host": ["{{base_url}}"],
+              "path": ["api", "bank", "export", "payments"],
+              "query": [
+                {
+                  "key": "tenant_id",
+                  "value": "{{tenant_id}}",
+                  "description": "Required"
+                },
+                {
+                  "key": "loan_type",
+                  "value": "{{loan_type}}",
+                  "description": "Required"
+                },
+                {
+                  "key": "multiply",
+                  "value": "true",
+                  "description": "Loops file content to simulate scale"
+                }
+              ]
+            },
+            "description": "Streams multiplied payments CSV output using server-side multiplier and size limits."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

@@ -3,21 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Teamsec ETL Platform</title>
+    <title>{% block title %}TeamSec Platform{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-    <style>
-        body { font-family: system-ui, sans-serif; margin: 2rem; background: #f4f6f8; }
-        .card { background: #fff; padding: 1.5rem; border-radius: 8px; max-width: 640px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
-        label { display: block; margin-top: .75rem; font-weight: 600; }
-        input, select { width: 100%; padding: .5rem; margin-top: .25rem; }
-        button { margin-top: 1rem; padding: .6rem 1.2rem; background: #1a56db; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
-        #result { margin-top: 1rem; padding: 1rem; background: #eef2ff; border-radius: 4px; }
-    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    {% block extra_head %}{% endblock %}
 </head>
-<body>
-    <div class="card">
-        <h1>Teamsec Multi-Tenant ETL</h1>
+<body class="bg-slate-100 min-h-screen">
+    <nav class="bg-white shadow px-6 py-4 flex justify-between items-center">
+        <h1 class="text-xl font-semibold text-slate-800">TeamSec ETL Platform</h1>
+        <div id="nav-auth" class="text-sm text-slate-600"></div>
+    </nav>
+    <main class="max-w-6xl mx-auto p-6">
         {% block content %}{% endblock %}
-    </div>
+    </main>
+    <script>
+        function authHeaders() {
+            const token = localStorage.getItem('jwt_token');
+            return token ? { 'Authorization': 'Bearer ' + token } : {};
+        }
+        function requireAuth() {
+            if (!localStorage.getItem('jwt_token')) {
+                window.location.href = '/login/';
+            }
+        }
+        document.body.addEventListener('htmx:configRequest', (event) => {
+            Object.assign(event.detail.headers, authHeaders());
+        });
+    </script>
+    {% block extra_scripts %}{% endblock %}
 </body>
 </html>

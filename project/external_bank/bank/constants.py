@@ -1,0 +1,11 @@
+TENANT_IDS = ("BANK001", "BANK002", "BANK003")
+LOAN_TYPES = ("RETAIL", "COMMERCIAL")
+
+TENANT_CHOICES = [(t, t) for t in TENANT_IDS]
+LOAN_TYPE_CHOICES = [(t, t) for t in LOAN_TYPES]
+
+CREDITS_FILENAME = "credits.csv"
+PAYMENTS_FILENAME = "payments.csv"
+
+CREDIT_DATA_TYPE = "credit_data"
+PAYMENT_PLAN_DATA_TYPE = "payment_plan_data"

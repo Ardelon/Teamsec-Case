@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - TeamSec{% endblock %}
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-semibold mb-4">Pipeline Control Console</h2>
+        <div class="space-y-3">
+            <div>
+                <label class="block text-sm font-medium">Loan Type</label>
+                <select id="loan" class="mt-1 w-full border rounded px-3 py-2">
+                    <option value="RETAIL">RETAIL</option>
+                    <option value="COMMERCIAL">COMMERCIAL</option>
+                </select>
+            </div>
+            <button id="sync-btn"
+                    class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+                Sync Data
+            </button>
+            <div id="sync-spinner" class="htmx-indicator text-sm text-slate-500">Processing...</div>
+        </div>
+        <div id="status-display" class="mt-4"></div>
+    </div>
+    <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-lg font-semibold mb-4">Analytical Dashboard</h2>
+        <button id="refresh-charts" class="text-sm text-blue-600 mb-4">Refresh Charts</button>
+        <div class="grid grid-cols-1 gap-4">
+            <canvas id="statusChart" height="120"></canvas>
+            <canvas id="amountChart" height="120"></canvas>
+        </div>
+        <div id="profiling-summary" class="mt-4 text-sm text-slate-600"></div>
+    </div>
+</div>
+<div class="mt-6 bg-white rounded-lg shadow p-6">
+    <h2 class="text-lg font-semibold mb-4">Credit Snapshot</h2>
+    <div id="data-table" class="overflow-x-auto text-sm"></div>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+requireAuth();
+document.getElementById('nav-auth').textContent = 'Tenant: ' + (localStorage.getItem('tenant_id') || '');
+
+let statusChart, amountChart;
+let syncGuard = null;
+
+function startSync(btn) {
+    btn.disabled = true;
+    btn.innerText = 'Processing...';
+    syncGuard = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.onbeforeunload = syncGuard;
+}
+
+function endSync() {
+    const btn = document.getElementById('sync-btn');
+    btn.disabled = false;
+    btn.innerText = 'Sync Data';
+    window.onbeforeunload = null;
+    syncGuard = null;
+}
+
+document.body.addEventListener('syncComplete', () => {
+    endSync();
+    loadProfiling();
+    loadData();
+});
+
+async function loadProfiling() {
+    const loanType = document.getElementById('loan').value;
+    const res = await fetch('/api/profiling?loan_type=' + loanType, { headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    document.getElementById('profiling-summary').textContent =
+        'Total records: ' + data.summary.total_records;
+
+    const statusDist = data.charts.categorical_distributions.loan_status_code || [];
+    const statusCtx = document.getElementById('statusChart').getContext('2d');
+    if (statusChart) statusChart.destroy();
+    statusChart = new Chart(statusCtx, {
+        type: 'bar',
+        data: {
+            labels: statusDist.map(d => d.value),
+            datasets: [{ label: 'Loan Status', data: statusDist.map(d => d.count), backgroundColor: '#3b82f6' }]
+        },
+        options: { responsive: true, plugins: { title: { display: true, text: 'Loan Status Distribution' } } }
+    });
+
+    const numFields = data.numerical_fields.original_loan_amount || {};
+    const amountCtx = document.getElementById('amountChart').getContext('2d');
+    if (amountChart) amountChart.destroy();
+    amountChart = new Chart(amountCtx, {
+        type: 'bar',
+        data: {
+            labels: ['Min', 'Avg', 'Max'],
+            datasets: [{ label: 'Original Loan Amount', data: [numFields.min, numFields.avg, numFields.max], backgroundColor: '#10b981' }]
+        },
+        options: { responsive: true, plugins: { title: { display: true, text: 'Loan Amount Stats' } } }
+    });
+}
+
+async function loadData() {
+    const loanType = document.getElementById('loan').value;
+    const res = await fetch('/api/data?loan_type=' + loanType, { headers: authHeaders() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const rows = (data.credits || []).slice(0, 20);
+    let html = '<table class="min-w-full"><thead><tr class="text-left border-b">' +
+        '<th class="py-2 pr-4">Account</th><th class="py-2 pr-4">Customer</th><th class="py-2 pr-4">Status</th><th class="py-2">Amount</th></tr></thead><tbody>';
+    rows.forEach(c => {
+        html += `<tr class="border-b"><td class="py-1 pr-4">${c.loan_account_number}</td>` +
+            `<td class="py-1 pr-4">${c.customer_id}</td><td class="py-1 pr-4">${c.loan_status_code}</td>` +
+            `<td class="py-1">${c.original_loan_amount ?? ''}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    if (!rows.length) html = '<p class="text-slate-500">No data synced yet.</p>';
+    document.getElementById('data-table').innerHTML = html;
+}
+
+document.getElementById('sync-btn').addEventListener('click', async (btn) => {
+    const button = document.getElementById('sync-btn');
+    startSync(button);
+    const loanType = document.getElementById('loan').value;
+    const res = await fetch('/api/sync', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loan_type: loanType }),
+    });
+    const data = await res.json();
+    if (res.status === 409) {
+        document.getElementById('status-display').innerHTML =
+            '<p class="text-amber-600">Sync already running: ' + data.active_job_id + '</p>';
+        endSync();
+        return;
+    }
+    if (!res.ok) {
+        document.getElementById('status-display').innerHTML =
+            '<p class="text-red-600">' + (data.error || 'Sync failed') + '</p>';
+        endSync();
+        return;
+    }
+    htmx.ajax('GET', '/api/sync/status/' + data.job_id, {
+        target: '#status-display',
+        swap: 'innerHTML',
+        headers: authHeaders(),
+    });
+});
+
+document.getElementById('refresh-charts').addEventListener('click', () => { loadProfiling(); loadData(); });
+document.getElementById('loan').addEventListener('change', () => { loadProfiling(); loadData(); });
+loadProfiling();
+loadData();
+</script>
+{% endblock %}

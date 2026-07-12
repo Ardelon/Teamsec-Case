@@ -1,0 +1,210 @@
+use crate::types::{ParsedCredit, ParsedPayment, PipelineError};
+use chrono::{DateTime, NaiveDate, Utc};
+use postgres_types::Json;
+use std::collections::HashMap;
+
+const CREDIT_BATCH_SIZE: usize = 500;
+const PAYMENT_BATCH_SIZE: usize = 1000;
+
+fn date_param(value: &Option<String>) -> Option<NaiveDate> {
+    value
+        .as_ref()
+        .and_then(|v| NaiveDate::parse_from_str(v, "%Y-%m-%d").ok())
+}
+
+fn text_param(value: &Option<String>) -> Option<&str> {
+    value.as_deref()
+}
+
+pub async fn persist_snapshot(
+    database_url: &str,
+    tenant_id: &str,
+    loan_type: &str,
+    credits: &[ParsedCredit],
+    payments: &[ParsedPayment],
+) -> Result<HashMap<String, i64>, PipelineError> {
+    let tenant_id = tenant_id.to_string();
+    let loan_type = loan_type.to_string();
+
+    let (mut client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
+        .await
+        .map_err(|e| PipelineError::Database(e.to_string()))?;
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("postgres connection error: {e}");
+        }
+    });
+
+    let transaction = client
+        .transaction()
+        .await
+        .map_err(|e| PipelineError::Database(e.to_string()))?;
+
+    transaction
+        .execute(
+            "DELETE FROM etl_paymentinstallment WHERE credit_id IN (
+                SELECT id FROM etl_creditrecord WHERE tenant_id = $1 AND loan_type = $2
+            )",
+            &[&tenant_id, &loan_type],
+        )
+        .await
+        .map_err(|e| PipelineError::Database(e.to_string()))?;
+
+    transaction
+        .execute(
+            "DELETE FROM etl_creditrecord WHERE tenant_id = $1 AND loan_type = $2",
+            &[&tenant_id, &loan_type],
+        )
+        .await
+        .map_err(|e| PipelineError::Database(e.to_string()))?;
+
+    let mut credit_id_map = HashMap::new();
+
+    for chunk in credits.chunks(CREDIT_BATCH_SIZE) {
+        for credit in chunk {
+            let final_maturity_date = date_param(&credit.final_maturity_date);
+            let first_payment_date = date_param(&credit.first_payment_date);
+            let loan_start_date = date_param(&credit.loan_start_date);
+            let loan_closing_date = date_param(&credit.loan_closing_date);
+            let original_loan_amount = text_param(&credit.original_loan_amount);
+            let outstanding_principal_balance = text_param(&credit.outstanding_principal_balance);
+            let nominal_interest_rate = text_param(&credit.nominal_interest_rate);
+            let total_interest_amount = text_param(&credit.total_interest_amount);
+            let kkdf_rate = text_param(&credit.kkdf_rate);
+            let kkdf_amount = text_param(&credit.kkdf_amount);
+            let bsmv_rate = text_param(&credit.bsmv_rate);
+            let bsmv_amount = text_param(&credit.bsmv_amount);
+            let retail_attrs = Json(&credit.retail_specific_attributes);
+            let commercial_attrs = Json(&credit.commercial_specific_attributes);
+            let snapshot_at: DateTime<Utc> = Utc::now();
+
+            let row = transaction
+                .query_one(
+                    "INSERT INTO etl_creditrecord (
+                        tenant_id, loan_type, loan_account_number, customer_id, customer_type,
+                        loan_status_code, days_past_due, final_maturity_date, total_installment_count,
+                        outstanding_installment_count, paid_installment_count, first_payment_date,
+                        original_loan_amount, outstanding_principal_balance, nominal_interest_rate,
+                        total_interest_amount, kkdf_rate, kkdf_amount, bsmv_rate, bsmv_amount,
+                        grace_period_months, installment_frequency, loan_start_date, loan_closing_date,
+                        internal_rating, external_rating, retail_specific_attributes,
+                        commercial_specific_attributes, snapshot_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+                        $13::text::numeric, $14::text::numeric, $15::text::numeric, $16::text::numeric,
+                        $17::text::numeric, $18::text::numeric, $19::text::numeric, $20::text::numeric,
+                        $21, $22, $23, $24, $25, $26, $27, $28, $29
+                    ) RETURNING id",
+                    &[
+                        &tenant_id,
+                        &loan_type,
+                        &credit.loan_account_number,
+                        &credit.customer_id,
+                        &credit.customer_type,
+                        &credit.loan_status_code,
+                        &credit.days_past_due,
+                        &final_maturity_date,
+                        &credit.total_installment_count,
+                        &credit.outstanding_installment_count,
+                        &credit.paid_installment_count,
+                        &first_payment_date,
+                        &original_loan_amount,
+                        &outstanding_principal_balance,
+                        &nominal_interest_rate,
+                        &total_interest_amount,
+                        &kkdf_rate,
+                        &kkdf_amount,
+                        &bsmv_rate,
+                        &bsmv_amount,
+                        &credit.grace_period_months,
+                        &credit.installment_frequency,
+                        &loan_start_date,
+                        &loan_closing_date,
+                        &credit.internal_rating,
+                        &credit.external_rating,
+                        &retail_attrs,
+                        &commercial_attrs,
+                        &snapshot_at,
+                    ],
+                )
+                .await
+                .map_err(|e| {
+                    PipelineError::Database(format!(
+                        "credit {}: {}",
+                        credit.loan_account_number, e
+                    ))
+                })?;
+
+            let id: i64 = row.get(0);
+            credit_id_map.insert(credit.loan_account_number.clone(), id);
+        }
+    }
+
+    for chunk in payments.chunks(PAYMENT_BATCH_SIZE) {
+        for payment in chunk {
+            let credit_id = *credit_id_map.get(&payment.loan_account_number).ok_or_else(|| {
+                PipelineError::Database(format!(
+                    "missing credit id for {}",
+                    payment.loan_account_number
+                ))
+            })?;
+
+            let actual_payment_date = date_param(&payment.actual_payment_date);
+            let scheduled_payment_date = date_param(&payment.scheduled_payment_date);
+            let installment_amount = text_param(&payment.installment_amount);
+            let principal_component = text_param(&payment.principal_component);
+            let interest_component = text_param(&payment.interest_component);
+            let kkdf_component = text_param(&payment.kkdf_component);
+            let bsmv_component = text_param(&payment.bsmv_component);
+            let remaining_principal = text_param(&payment.remaining_principal);
+            let remaining_interest = text_param(&payment.remaining_interest);
+            let remaining_kkdf = text_param(&payment.remaining_kkdf);
+            let remaining_bsmv = text_param(&payment.remaining_bsmv);
+
+            transaction
+                .execute(
+                    "INSERT INTO etl_paymentinstallment (
+                        credit_id, installment_number, actual_payment_date, scheduled_payment_date,
+                        installment_amount, principal_component, interest_component, kkdf_component,
+                        bsmv_component, installment_status, remaining_principal, remaining_interest,
+                        remaining_kkdf, remaining_bsmv
+                    ) VALUES (
+                        $1, $2, $3, $4,
+                        $5::text::numeric, $6::text::numeric, $7::text::numeric, $8::text::numeric, $9::text::numeric,
+                        $10, $11::text::numeric, $12::text::numeric, $13::text::numeric, $14::text::numeric
+                    )",
+                    &[
+                        &credit_id,
+                        &payment.installment_number,
+                        &actual_payment_date,
+                        &scheduled_payment_date,
+                        &installment_amount,
+                        &principal_component,
+                        &interest_component,
+                        &kkdf_component,
+                        &bsmv_component,
+                        &payment.installment_status,
+                        &remaining_principal,
+                        &remaining_interest,
+                        &remaining_kkdf,
+                        &remaining_bsmv,
+                    ],
+                )
+                .await
+                .map_err(|e| {
+                    PipelineError::Database(format!(
+                        "payment {}#{}: {}",
+                        payment.loan_account_number, payment.installment_number, e
+                    ))
+                })?;
+        }
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|e| PipelineError::Database(e.to_string()))?;
+
+    Ok(credit_id_map)
+}
