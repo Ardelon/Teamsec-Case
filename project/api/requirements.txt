@@ -1,0 +1,7 @@
+django>=5.0
+djangorestframework
+pyjwt
+redis
+psycopg[binary]
+celery
+requests

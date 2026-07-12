@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<p>Trigger a multi-tenant ETL job processed by the Rust adapter via Celery.</p>
+<form hx-post="/etl/jobs/trigger/" hx-target="#result" hx-swap="innerHTML">
+    <label for="tenant_id">Tenant ID</label>
+    <input id="tenant_id" name="tenant_id" value="tenant_alpha" required>
+
+    <label for="loan_type">Loan Type</label>
+    <select id="loan_type" name="loan_type">
+        <option value="mortgage">Mortgage</option>
+        <option value="auto">Auto</option>
+        <option value="personal">Personal</option>
+    </select>
+
+    <button type="submit">Run ETL Pipeline</button>
+</form>
+<div id="result"></div>
+{% endblock %}
