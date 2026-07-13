@@ -14,7 +14,7 @@ from bank.services.storage import (
     validate_loan_type,
     validate_tenant_id,
 )
-from bank.services.streaming import parse_multiply, stream_csv_file
+from bank.services.streaming import parse_multiply, stream_json_file
 
 
 def health(request):
@@ -75,9 +75,11 @@ def _export_file(request, file_kind: str):
     if file_kind == "credits":
         file_path = credits_path(tenant_id, loan_type)
         filename = CREDITS_FILENAME
+        export_name = "credits.json"
     else:
         file_path = payments_path(tenant_id, loan_type)
         filename = PAYMENTS_FILENAME
+        export_name = "payments.json"
 
     if not file_path.exists():
         return JsonResponse(
@@ -87,10 +89,10 @@ def _export_file(request, file_kind: str):
 
     multiply = parse_multiply(request.GET.get("multiply"))
     response = StreamingHttpResponse(
-        stream_csv_file(file_path, multiply),
-        content_type="text/csv",
+        stream_json_file(file_path, multiply),
+        content_type="application/json",
     )
-    response["Content-Disposition"] = f'inline; filename="{filename}"'
+    response["Content-Disposition"] = f'inline; filename="{export_name}"'
     return response
 
 

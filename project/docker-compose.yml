@@ -130,7 +130,7 @@ services:
         condition: service_healthy
       core_backend_api:
         condition: service_started
-    command: celery -A config worker --loglevel=info
+    command: celery -A config worker --loglevel=info --concurrency=1
 
 networks:
   teamsec_network:

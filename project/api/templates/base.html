@@ -12,9 +12,15 @@
 <body class="bg-slate-100 min-h-screen">
     <nav class="bg-white shadow px-6 py-4 flex justify-between items-center">
         <h1 class="text-xl font-semibold text-slate-800">TeamSec ETL Platform</h1>
-        <div id="nav-auth" class="text-sm text-slate-600"></div>
+        <div class="flex items-center gap-4">
+            <div id="nav-auth" class="text-sm text-slate-600"></div>
+            <button id="logout-btn" type="button"
+                    class="hidden text-sm text-red-600 hover:text-red-800 font-medium">
+                Logout
+            </button>
+        </div>
     </nav>
-    <main class="max-w-6xl mx-auto p-6">
+    <main class="max-w-7xl mx-auto p-6">
         {% block content %}{% endblock %}
     </main>
     <script>
@@ -27,6 +33,34 @@
                 window.location.href = '/login/';
             }
         }
+        function logout() {
+            localStorage.removeItem('jwt_token');
+            localStorage.removeItem('tenant_id');
+            window.location.href = '/login/';
+        }
+        function updateNavAuth() {
+            const navAuth = document.getElementById('nav-auth');
+            const logoutBtn = document.getElementById('logout-btn');
+            const tenantId = localStorage.getItem('tenant_id');
+            const token = localStorage.getItem('jwt_token');
+            if (!navAuth || !logoutBtn) {
+                return;
+            }
+            if (token) {
+                navAuth.textContent = 'Tenant: ' + (tenantId || '');
+                logoutBtn.classList.remove('hidden');
+            } else {
+                navAuth.textContent = '';
+                logoutBtn.classList.add('hidden');
+            }
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            updateNavAuth();
+            const logoutBtn = document.getElementById('logout-btn');
+            if (logoutBtn) {
+                logoutBtn.addEventListener('click', logout);
+            }
+        });
         document.body.addEventListener('htmx:configRequest', (event) => {
             Object.assign(event.detail.headers, authHeaders());
         });

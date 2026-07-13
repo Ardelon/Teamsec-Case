@@ -1,9 +1,13 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 
+from django.db.models import Max
 from django.utils import timezone as dj_timezone
 
 from apps.etl.models import CreditRecord, PaymentInstallment
+
+DEFAULT_PAGE_SIZE = 50
+MAX_PAGE_SIZE = 200
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -44,7 +48,7 @@ def _serialize_decimal(value: Decimal | None) -> float | None:
     return float(value) if value is not None else None
 
 
-def build_credit_payload(credit: CreditRecord) -> dict:
+def build_credit_row_payload(credit: CreditRecord) -> dict:
     return {
         "loan_account_number": credit.loan_account_number,
         "customer_id": credit.customer_id,
@@ -59,57 +63,87 @@ def build_credit_payload(credit: CreditRecord) -> dict:
         "original_loan_amount": _serialize_decimal(credit.original_loan_amount),
         "outstanding_principal_balance": _serialize_decimal(credit.outstanding_principal_balance),
         "nominal_interest_rate": _serialize_decimal(credit.nominal_interest_rate),
-        "total_interest_amount": _serialize_decimal(credit.total_interest_amount),
-        "kkdf_rate": _serialize_decimal(credit.kkdf_rate),
-        "kkdf_amount": _serialize_decimal(credit.kkdf_amount),
-        "bsmv_rate": _serialize_decimal(credit.bsmv_rate),
-        "bsmv_amount": _serialize_decimal(credit.bsmv_amount),
-        "grace_period_months": credit.grace_period_months,
-        "installment_frequency": credit.installment_frequency,
         "loan_start_date": _serialize_date(credit.loan_start_date),
         "loan_closing_date": _serialize_date(credit.loan_closing_date),
         "internal_rating": credit.internal_rating,
         "external_rating": credit.external_rating,
-        "commercial_specific_attributes": credit.commercial_specific_attributes or {},
-        "retail_specific_attributes": credit.retail_specific_attributes or {},
-        "payment_schedule": [
-            {
-                "installment_number": p.installment_number,
-                "actual_payment_date": _serialize_date(p.actual_payment_date),
-                "scheduled_payment_date": _serialize_date(p.scheduled_payment_date),
-                "installment_amount": _serialize_decimal(p.installment_amount),
-                "principal_component": _serialize_decimal(p.principal_component),
-                "interest_component": _serialize_decimal(p.interest_component),
-                "kkdf_component": _serialize_decimal(p.kkdf_component),
-                "bsmv_component": _serialize_decimal(p.bsmv_component),
-                "installment_status": p.installment_status,
-                "remaining_principal": _serialize_decimal(p.remaining_principal),
-                "remaining_interest": _serialize_decimal(p.remaining_interest),
-                "remaining_kkdf": _serialize_decimal(p.remaining_kkdf),
-                "remaining_bsmv": _serialize_decimal(p.remaining_bsmv),
-            }
-            for p in credit.payment_schedule.all()
-        ],
     }
 
 
-def get_data_snapshot(tenant_id: str, loan_type: str) -> dict:
-    credits = (
-        CreditRecord.objects.filter(tenant_id=tenant_id, loan_type=loan_type)
-        .prefetch_related("payment_schedule")
-        .order_by("loan_account_number")
+def build_credit_payload(credit: CreditRecord) -> dict:
+    payload = build_credit_row_payload(credit)
+    payload.update(
+        {
+            "total_interest_amount": _serialize_decimal(credit.total_interest_amount),
+            "kkdf_rate": _serialize_decimal(credit.kkdf_rate),
+            "kkdf_amount": _serialize_decimal(credit.kkdf_amount),
+            "bsmv_rate": _serialize_decimal(credit.bsmv_rate),
+            "bsmv_amount": _serialize_decimal(credit.bsmv_amount),
+            "grace_period_months": credit.grace_period_months,
+            "installment_frequency": credit.installment_frequency,
+            "commercial_specific_attributes": credit.commercial_specific_attributes or {},
+            "retail_specific_attributes": credit.retail_specific_attributes or {},
+            "payment_schedule": [
+                {
+                    "installment_number": p.installment_number,
+                    "actual_payment_date": _serialize_date(p.actual_payment_date),
+                    "scheduled_payment_date": _serialize_date(p.scheduled_payment_date),
+                    "installment_amount": _serialize_decimal(p.installment_amount),
+                    "principal_component": _serialize_decimal(p.principal_component),
+                    "interest_component": _serialize_decimal(p.interest_component),
+                    "kkdf_component": _serialize_decimal(p.kkdf_component),
+                    "bsmv_component": _serialize_decimal(p.bsmv_component),
+                    "installment_status": p.installment_status,
+                    "remaining_principal": _serialize_decimal(p.remaining_principal),
+                    "remaining_interest": _serialize_decimal(p.remaining_interest),
+                    "remaining_kkdf": _serialize_decimal(p.remaining_kkdf),
+                    "remaining_bsmv": _serialize_decimal(p.remaining_bsmv),
+                }
+                for p in credit.payment_schedule.all()
+            ],
+        }
     )
-    latest = credits.order_by("-snapshot_at").first()
+    return payload
+
+
+def get_data_snapshot(
+    tenant_id: str,
+    loan_type: str,
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+) -> dict:
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), MAX_PAGE_SIZE)
+
+    base_qs = CreditRecord.objects.filter(tenant_id=tenant_id, loan_type=loan_type)
+    total_count = base_qs.count()
+    total_pages = (total_count + page_size - 1) // page_size if total_count else 0
+    if total_pages and page > total_pages:
+        page = total_pages
+
+    latest_snapshot = base_qs.aggregate(latest=Max("snapshot_at"))["latest"]
     extraction_date = (
-        latest.snapshot_at.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
-        if latest
+        latest_snapshot.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        if latest_snapshot
         else None
     )
+
+    offset = (page - 1) * page_size
+    credits = base_qs.order_by("loan_account_number")[offset : offset + page_size]
+
     return {
         "tenant_id": tenant_id,
         "loan_type": loan_type,
         "extraction_date": extraction_date,
-        "credits": [build_credit_payload(c) for c in credits],
+        "credits": [build_credit_row_payload(c) for c in credits],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_count": total_count,
+            "total_pages": total_pages,
+            "has_previous": page > 1,
+            "has_next": total_pages > 0 and page < total_pages,
+        },
     }
 
 

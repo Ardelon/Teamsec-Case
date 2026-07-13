@@ -1,7 +1,7 @@
-use crate::db::persist_snapshot;
+use crate::db::{open_database_client, SnapshotWriter};
 use crate::parser::{parse_date, parse_decimal, parse_int};
 use crate::profiler::WelfordProfiler;
-use crate::stream::fetch_csv_rows;
+use crate::stream::JsonRowStream;
 use crate::types::{
     build_commercial_attributes, build_retail_attributes, ErrorLog, ParsedCredit, ParsedPayment,
     PipelineMetrics, PipelineResult,
@@ -22,13 +22,8 @@ pub struct ProgressState<'a> {
 }
 
 impl<'a> ProgressState<'a> {
-    pub fn emit(&self, py: Python, processed_rows: u64) -> PyResult<()> {
+    pub fn emit(&self, py: Python, processed_rows: u64, progress_percentage: u8) -> PyResult<()> {
         if let Some(callback) = self.callback {
-            let progress = if self.total_rows == 0 {
-                0
-            } else {
-                ((processed_rows as f64 / self.total_rows as f64) * 100.0) as u8
-            };
             let errors: Vec<(u32, String, String, String)> = self
                 .errors
                 .iter()
@@ -41,10 +36,21 @@ impl<'a> ProgressState<'a> {
                     )
                 })
                 .collect();
-            callback.call1(py, (processed_rows, progress, errors))?;
+            callback.call1(py, (processed_rows, progress_percentage, errors))?;
         }
         Ok(())
     }
+}
+
+fn credit_phase_progress(row_number: u32) -> u8 {
+    let rows = row_number as u64;
+    (5 + (rows.saturating_mul(35) / rows.saturating_add(10_000)).min(39)) as u8
+}
+
+fn payment_phase_progress(payment_row: u32, credit_count: u64) -> u8 {
+    let payments = payment_row as u64;
+    let credits = credit_count.max(1);
+    (40 + (payments.saturating_mul(50) / payments.saturating_add(credits)).min(50)) as u8
 }
 
 fn collect_date(
@@ -187,25 +193,25 @@ pub async fn run_pipeline(
     on_progress: ProgressCallback,
 ) -> PyResult<PipelineResult> {
     let started = Instant::now();
-    let client = Client::new();
+    let http_client = Client::new();
+    let loan_type_upper = loan_type.to_uppercase();
     let mut error_logs = Vec::new();
     let mut profiler = WelfordProfiler::new();
-
-    let credit_rows = fetch_csv_rows(&client, &bank_credits_url)
-        .await
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-    let payment_rows = fetch_csv_rows(&client, &bank_payments_url)
-        .await
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-    let total_rows = (credit_rows.len() + payment_rows.len()) as u64;
-    let mut processed_rows = 0u64;
     let mut valid_credits = Vec::new();
     let mut known_accounts = HashSet::new();
+    let mut processed_rows = 0u64;
 
-    for (index, row) in credit_rows.iter().enumerate() {
-        let row_number = (index + 1) as u32;
-        if let Some(credit) = parse_credit_row(row, row_number, &loan_type, &mut error_logs) {
+    let mut credit_stream = JsonRowStream::open(&http_client, &bank_credits_url)
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    while let Some(row) = credit_stream
+        .next_row()
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+    {
+        let row_number = credit_stream.row_number();
+        if let Some(credit) = parse_credit_row(&row, row_number, &loan_type, &mut error_logs) {
             if let Some(amount) = credit
                 .original_loan_amount
                 .as_ref()
@@ -218,47 +224,95 @@ pub async fn run_pipeline(
             known_accounts.insert(credit.loan_account_number.clone());
             valid_credits.push(credit);
         }
+
         processed_rows += 1;
-        if row_number % 500 == 0 || processed_rows == credit_rows.len() as u64 {
+        if row_number % 500 == 0 {
             let state = ProgressState {
                 callback: &on_progress,
-                total_rows,
+                total_rows: processed_rows,
                 processed_rows,
                 errors: &error_logs,
             };
-            state.emit(py, processed_rows)?;
+            state.emit(py, processed_rows, credit_phase_progress(row_number))?;
         }
     }
 
-    let mut valid_payments = Vec::new();
-    for (index, row) in payment_rows.iter().enumerate() {
-        let row_number = (index + 1) as u32;
-        if let Some(payment) = parse_payment_row(row, row_number, &known_accounts, &mut error_logs) {
-            valid_payments.push(payment);
+    let credit_count = valid_credits.len() as u64;
+    {
+        let state = ProgressState {
+            callback: &on_progress,
+            total_rows: processed_rows,
+            processed_rows,
+            errors: &error_logs,
+        };
+        state.emit(py, processed_rows, 40)?;
+    }
+
+    let (mut db_client, _connection_task) = open_database_client(&database_url)
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    let mut writer = SnapshotWriter::begin(&mut db_client, &tenant_id, &loan_type_upper)
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    writer
+        .insert_credits(&valid_credits)
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    valid_credits.clear();
+    valid_credits.shrink_to_fit();
+
+    let mut payment_stream = JsonRowStream::open(&http_client, &bank_payments_url)
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    while let Some(row) = payment_stream
+        .next_row()
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?
+    {
+        let row_number = payment_stream.row_number();
+        if let Some(payment) = parse_payment_row(&row, row_number, &known_accounts, &mut error_logs) {
+            writer
+                .push_payment(payment)
+                .await
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         }
+
         processed_rows += 1;
-        if row_number % 1000 == 0 || processed_rows == total_rows {
+        if row_number % 1000 == 0 {
             let state = ProgressState {
                 callback: &on_progress,
-                total_rows,
+                total_rows: processed_rows,
                 processed_rows,
                 errors: &error_logs,
             };
-            state.emit(py, processed_rows)?;
+            state.emit(
+                py,
+                processed_rows,
+                payment_phase_progress(row_number, credit_count),
+            )?;
         }
     }
 
-    let persist_result = persist_snapshot(
-        &database_url,
-        &tenant_id,
-        &loan_type.to_uppercase(),
-        &valid_credits,
-        &valid_payments,
-    )
-    .await;
+    {
+        let state = ProgressState {
+            callback: &on_progress,
+            total_rows: processed_rows,
+            processed_rows,
+            errors: &error_logs,
+        };
+        state.emit(py, processed_rows, 95)?;
+    }
 
-    let success = persist_result.is_ok();
+    let persist_result = writer.commit().await;
+    let mut success = persist_result.is_ok();
+    let payments_ingested = persist_result.as_ref().copied().unwrap_or(0);
+
     if let Err(err) = persist_result {
+        success = false;
         error_logs.push(ErrorLog {
             row_number: 0,
             field: "pipeline".to_string(),
@@ -268,8 +322,8 @@ pub async fn run_pipeline(
     }
 
     let metrics = PipelineMetrics {
-        total_credits_ingested: valid_credits.len() as u64,
-        total_payments_ingested: valid_payments.len() as u64,
+        total_credits_ingested: credit_count,
+        total_payments_ingested: payments_ingested,
     };
 
     Ok(PipelineResult {

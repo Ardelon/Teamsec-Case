@@ -24,4 +24,4 @@ COPY api /app/api
 
 WORKDIR /app/api
 
-CMD ["celery", "-A", "config", "worker", "--loglevel=info"]
+CMD ["celery", "-A", "config", "worker", "--loglevel=info", "--concurrency=2"]

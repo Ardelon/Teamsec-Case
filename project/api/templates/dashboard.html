@@ -4,75 +4,410 @@
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <div class="bg-white rounded-lg shadow p-6">
         <h2 class="text-lg font-semibold mb-4">Pipeline Control Console</h2>
-        <div class="space-y-3">
-            <div>
-                <label class="block text-sm font-medium">Loan Type</label>
-                <select id="loan" class="mt-1 w-full border rounded px-3 py-2">
-                    <option value="RETAIL">RETAIL</option>
-                    <option value="COMMERCIAL">COMMERCIAL</option>
-                </select>
+        <p class="text-sm text-slate-500 mb-4">RETAIL and COMMERCIAL syncs run independently.</p>
+        <div class="space-y-4">
+            <div class="border rounded-lg p-4">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <p class="font-medium">RETAIL</p>
+                        <p class="text-xs text-slate-500">Sync retail portfolio data</p>
+                    </div>
+                    <button id="sync-btn-RETAIL" data-loan-type="RETAIL"
+                            class="sync-btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+                        Sync RETAIL
+                    </button>
+                </div>
+                <div id="status-display-RETAIL" class="mt-3"></div>
             </div>
-            <button id="sync-btn"
-                    class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
-                Sync Data
-            </button>
-            <div id="sync-spinner" class="htmx-indicator text-sm text-slate-500">Processing...</div>
+            <div class="border rounded-lg p-4">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <p class="font-medium">COMMERCIAL</p>
+                        <p class="text-xs text-slate-500">Sync commercial portfolio data</p>
+                    </div>
+                    <button id="sync-btn-COMMERCIAL" data-loan-type="COMMERCIAL"
+                            class="sync-btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
+                        Sync COMMERCIAL
+                    </button>
+                </div>
+                <div id="status-display-COMMERCIAL" class="mt-3"></div>
+            </div>
         </div>
-        <div id="status-display" class="mt-4"></div>
     </div>
     <div class="bg-white rounded-lg shadow p-6">
-        <h2 class="text-lg font-semibold mb-4">Analytical Dashboard</h2>
-        <button id="refresh-charts" class="text-sm text-blue-600 mb-4">Refresh Charts</button>
-        <div class="grid grid-cols-1 gap-4">
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h2 class="text-lg font-semibold">Analytical Dashboard</h2>
+            <button id="refresh-charts" class="text-sm text-blue-600 hover:text-blue-800">Refresh Stats</button>
+        </div>
+        <div class="mb-4">
+            <label class="block text-sm font-medium">View loan type</label>
+            <select id="loan" class="mt-1 w-full border rounded px-3 py-2">
+                <option value="RETAIL">RETAIL</option>
+                <option value="COMMERCIAL">COMMERCIAL</option>
+            </select>
+        </div>
+
+        <div id="profiling-kpis" class="grid grid-cols-2 gap-3 mb-4"></div>
+
+        <div class="grid grid-cols-1 gap-4 mb-6">
             <canvas id="statusChart" height="120"></canvas>
             <canvas id="amountChart" height="120"></canvas>
+            <canvas id="nullChart" height="140"></canvas>
         </div>
-        <div id="profiling-summary" class="mt-4 text-sm text-slate-600"></div>
+
+        <div class="space-y-6">
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Numeric Fields (Credits)</h3>
+                <div id="numeric-stats" class="overflow-x-auto text-sm"></div>
+            </div>
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Categorical Fields (Credits)</h3>
+                <div id="categorical-stats" class="overflow-x-auto text-sm"></div>
+            </div>
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Null / Missing Ratio (Credits)</h3>
+                <div id="null-stats" class="overflow-x-auto text-sm"></div>
+            </div>
+            <div>
+                <h3 class="text-sm font-semibold text-slate-700 mb-2">Payment Installments</h3>
+                <div id="payment-stats" class="overflow-x-auto text-sm"></div>
+            </div>
+        </div>
+        <div id="profiling-summary" class="mt-4 text-xs text-slate-500"></div>
     </div>
 </div>
 <div class="mt-6 bg-white rounded-lg shadow p-6">
-    <h2 class="text-lg font-semibold mb-4">Credit Snapshot</h2>
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h2 class="text-lg font-semibold">Credit Snapshot</h2>
+        <p id="data-summary" class="text-sm text-slate-500"></p>
+    </div>
     <div id="data-table" class="overflow-x-auto text-sm"></div>
+    <div id="data-pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3"></div>
 </div>
 {% endblock %}
 {% block extra_scripts %}
 <script>
 requireAuth();
-document.getElementById('nav-auth').textContent = 'Tenant: ' + (localStorage.getItem('tenant_id') || '');
 
-let statusChart, amountChart;
-let syncGuard = null;
+const LOAN_TYPES = ['RETAIL', 'COMMERCIAL'];
+const CREDIT_PAGE_SIZE = 50;
+let statusChart, amountChart, nullChart;
+let creditPage = 1;
+const activeSyncs = new Set();
 
-function startSync(btn) {
+const FIELD_LABELS = {
+    days_past_due: 'Days Past Due',
+    total_installment_count: 'Total Installments',
+    outstanding_installment_count: 'Outstanding Installments',
+    paid_installment_count: 'Paid Installments',
+    original_loan_amount: 'Original Loan Amount',
+    outstanding_principal_balance: 'Outstanding Principal',
+    nominal_interest_rate: 'Nominal Interest Rate',
+    total_interest_amount: 'Total Interest',
+    kkdf_rate: 'KKDF Rate',
+    kkdf_amount: 'KKDF Amount',
+    bsmv_rate: 'BSMV Rate',
+    bsmv_amount: 'BSMV Amount',
+    grace_period_months: 'Grace Period (Months)',
+    installment_frequency: 'Installment Frequency',
+    internal_rating: 'Internal Rating',
+    external_rating: 'External Rating',
+    customer_type: 'Customer Type',
+    loan_status_code: 'Loan Status',
+    loan_account_number: 'Loan Account',
+    customer_id: 'Customer ID',
+    final_maturity_date: 'Final Maturity Date',
+    first_payment_date: 'First Payment Date',
+    loan_start_date: 'Loan Start Date',
+    loan_closing_date: 'Loan Closing Date',
+    installment_amount: 'Installment Amount',
+    principal_component: 'Principal Component',
+    interest_component: 'Interest Component',
+    remaining_principal: 'Remaining Principal',
+    installment_status: 'Installment Status',
+    actual_payment_date: 'Actual Payment Date',
+    scheduled_payment_date: 'Scheduled Payment Date',
+};
+
+function fieldLabel(field) {
+    return FIELD_LABELS[field] || field;
+}
+
+function formatNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return '—';
+    }
+    const number = Number(value);
+    if (Number.isNaN(number)) {
+        return escapeHtml(value);
+    }
+    return number.toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
+
+function formatPercent(ratio, percent) {
+    if (percent !== undefined && percent !== null) {
+        return Number(percent).toFixed(2) + '%';
+    }
+    if (ratio === undefined || ratio === null) {
+        return '—';
+    }
+    return (Number(ratio) * 100).toFixed(2) + '%';
+}
+
+function syncButton(loanType) {
+    return document.getElementById('sync-btn-' + loanType);
+}
+
+function statusDisplay(loanType) {
+    return document.getElementById('status-display-' + loanType);
+}
+
+function startSync(loanType) {
+    activeSyncs.add(loanType);
+    const btn = syncButton(loanType);
     btn.disabled = true;
     btn.innerText = 'Processing...';
-    syncGuard = (e) => { e.preventDefault(); e.returnValue = ''; };
-    window.onbeforeunload = syncGuard;
 }
 
-function endSync() {
-    const btn = document.getElementById('sync-btn');
+function endSync(loanType) {
+    activeSyncs.delete(loanType);
+    const btn = syncButton(loanType);
     btn.disabled = false;
-    btn.innerText = 'Sync Data';
-    window.onbeforeunload = null;
-    syncGuard = null;
+    btn.innerText = 'Sync ' + loanType;
 }
 
-document.body.addEventListener('syncComplete', () => {
-    endSync();
-    loadProfiling();
-    loadData();
+function updateBeforeUnload() {
+    window.onbeforeunload = activeSyncs.size
+        ? (e) => { e.preventDefault(); e.returnValue = ''; }
+        : null;
+}
+
+document.body.addEventListener('syncComplete', (event) => {
+    const loanType = event.detail?.loanType;
+    if (loanType) {
+        endSync(loanType);
+    }
+    updateBeforeUnload();
+    if (document.getElementById('loan').value === loanType) {
+        loadProfiling();
+        creditPage = 1;
+        loadData(1);
+    }
 });
+
+document.body.addEventListener('syncFailed', (event) => {
+    const loanType = event.detail?.loanType;
+    if (loanType) {
+        endSync(loanType);
+    }
+    updateBeforeUnload();
+});
+
+function renderStatusAlert(type, title, message, hint) {
+    const styles = {
+        error: 'border-red-200 bg-red-50 text-red-800',
+        warning: 'border-amber-200 bg-amber-50 text-amber-800',
+    };
+    const style = styles[type] || styles.error;
+    return `<div class="border rounded-lg p-4 ${style}">
+        <p class="font-semibold">${title}</p>
+        <p class="mt-1 text-sm">${message}</p>
+        ${hint ? `<p class="mt-2 text-sm opacity-90">${hint}</p>` : ''}
+    </div>`;
+}
 
 async function loadProfiling() {
     const loanType = document.getElementById('loan').value;
     const res = await fetch('/api/profiling?loan_type=' + loanType, { headers: authHeaders() });
     if (!res.ok) return;
     const data = await res.json();
-    document.getElementById('profiling-summary').textContent =
-        'Total records: ' + data.summary.total_records;
+    renderProfilingDashboard(data);
+}
 
-    const statusDist = data.charts.categorical_distributions.loan_status_code || [];
+function renderProfilingDashboard(data) {
+    const totalCredits = data.summary?.total_records ?? data.total_records ?? 0;
+    const totalPayments = data.summary?.total_payments ?? data.total_payments ?? 0;
+    const generatedAt = data.generated_at || '';
+
+    document.getElementById('profiling-kpis').innerHTML = `
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs text-slate-500">Credits</p>
+            <p class="text-xl font-semibold text-slate-800">${formatNumber(totalCredits)}</p>
+        </div>
+        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs text-slate-500">Payments</p>
+            <p class="text-xl font-semibold text-slate-800">${formatNumber(totalPayments)}</p>
+        </div>
+    `;
+
+    document.getElementById('profiling-summary').textContent = generatedAt
+        ? 'Stats generated at ' + generatedAt
+        : '';
+
+    renderNumericTable(data.numerical_fields || {});
+    renderCategoricalTable(data.categorical_fields || {});
+    renderNullTable(data.summary?.null_fields_distribution || data.charts?.null_fields_distribution || []);
+    renderPaymentStats(data.payments || {});
+    renderProfilingCharts(data);
+}
+
+function renderNumericTable(fields) {
+    const entries = Object.entries(fields);
+    const el = document.getElementById('numeric-stats');
+    if (!entries.length) {
+        el.innerHTML = '<p class="text-slate-500">No numeric stats available.</p>';
+        return;
+    }
+
+    let html = `<table class="min-w-full">
+        <thead><tr class="text-left border-b bg-slate-50">
+            <th class="py-2 px-3">Field</th>
+            <th class="py-2 px-3">Min</th>
+            <th class="py-2 px-3">Max</th>
+            <th class="py-2 px-3">Avg</th>
+            <th class="py-2 px-3">StdDev</th>
+            <th class="py-2 px-3">Missing %</th>
+        </tr></thead><tbody>`;
+
+    entries.forEach(([field, stats]) => {
+        html += `<tr class="border-b hover:bg-slate-50">
+            <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.min)}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.max)}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.avg)}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.stddev)}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+
+function renderCategoricalTable(fields) {
+    const entries = Object.entries(fields);
+    const el = document.getElementById('categorical-stats');
+    if (!entries.length) {
+        el.innerHTML = '<p class="text-slate-500">No categorical stats available.</p>';
+        return;
+    }
+
+    let html = `<table class="min-w-full">
+        <thead><tr class="text-left border-b bg-slate-50">
+            <th class="py-2 px-3">Field</th>
+            <th class="py-2 px-3">Unique Values</th>
+            <th class="py-2 px-3">Most Frequent</th>
+            <th class="py-2 px-3">Frequency</th>
+            <th class="py-2 px-3">Missing %</th>
+        </tr></thead><tbody>`;
+
+    entries.forEach(([field, stats]) => {
+        html += `<tr class="border-b hover:bg-slate-50">
+            <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.unique_values_count)}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${escapeHtml(stats.most_frequent_value || '—')}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.most_frequent_count)}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+
+function renderNullTable(rows) {
+    const el = document.getElementById('null-stats');
+    if (!rows.length) {
+        el.innerHTML = '<p class="text-slate-500">No null-ratio stats available.</p>';
+        return;
+    }
+
+    const sorted = [...rows].sort((a, b) => (b.ratio_percent ?? b.ratio * 100) - (a.ratio_percent ?? a.ratio * 100));
+    let html = `<table class="min-w-full">
+        <thead><tr class="text-left border-b bg-slate-50">
+            <th class="py-2 px-3">Field</th>
+            <th class="py-2 px-3">Missing %</th>
+            <th class="py-2 px-3 w-1/2">Distribution</th>
+        </tr></thead><tbody>`;
+
+    sorted.forEach((row) => {
+        const percent = row.ratio_percent ?? (Number(row.ratio) * 100);
+        const width = Math.min(100, Math.max(0, Number(percent) || 0));
+        html += `<tr class="border-b hover:bg-slate-50">
+            <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(row.field))}</td>
+            <td class="py-2 px-3 whitespace-nowrap">${formatPercent(row.ratio, row.ratio_percent)}</td>
+            <td class="py-2 px-3">
+                <div class="h-2 rounded-full bg-slate-200 overflow-hidden">
+                    <div class="h-full bg-amber-500" style="width:${width}%"></div>
+                </div>
+            </td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+
+function renderPaymentStats(payments) {
+    const el = document.getElementById('payment-stats');
+    const total = payments.total_records || 0;
+    const numeric = Object.entries(payments.numerical_fields || {});
+    const categorical = Object.entries(payments.categorical_fields || {});
+
+    if (!total && !numeric.length && !categorical.length) {
+        el.innerHTML = '<p class="text-slate-500">No payment stats available.</p>';
+        return;
+    }
+
+    let html = `<p class="text-sm text-slate-600 mb-3">${formatNumber(total)} payment installments</p>`;
+
+    if (numeric.length) {
+        html += `<table class="min-w-full mb-4">
+            <thead><tr class="text-left border-b bg-slate-50">
+                <th class="py-2 px-3">Field</th>
+                <th class="py-2 px-3">Min</th>
+                <th class="py-2 px-3">Max</th>
+                <th class="py-2 px-3">Avg</th>
+                <th class="py-2 px-3">StdDev</th>
+                <th class="py-2 px-3">Missing %</th>
+            </tr></thead><tbody>`;
+        numeric.forEach(([field, stats]) => {
+            html += `<tr class="border-b hover:bg-slate-50">
+                <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.min)}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.max)}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.avg)}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.stddev)}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+    }
+
+    if (categorical.length) {
+        html += `<table class="min-w-full">
+            <thead><tr class="text-left border-b bg-slate-50">
+                <th class="py-2 px-3">Field</th>
+                <th class="py-2 px-3">Unique Values</th>
+                <th class="py-2 px-3">Most Frequent</th>
+                <th class="py-2 px-3">Missing %</th>
+            </tr></thead><tbody>`;
+        categorical.forEach(([field, stats]) => {
+            html += `<tr class="border-b hover:bg-slate-50">
+                <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.unique_values_count)}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${escapeHtml(stats.most_frequent_value || '—')}</td>
+                <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+    }
+
+    el.innerHTML = html;
+}
+
+function renderProfilingCharts(data) {
+    const statusDist = data.charts?.categorical_distributions?.loan_status_code || [];
     const statusCtx = document.getElementById('statusChart').getContext('2d');
     if (statusChart) statusChart.destroy();
     statusChart = new Chart(statusCtx, {
@@ -84,69 +419,232 @@ async function loadProfiling() {
         options: { responsive: true, plugins: { title: { display: true, text: 'Loan Status Distribution' } } }
     });
 
-    const numFields = data.numerical_fields.original_loan_amount || {};
+    const numFields = data.numerical_fields?.original_loan_amount || {};
     const amountCtx = document.getElementById('amountChart').getContext('2d');
     if (amountChart) amountChart.destroy();
     amountChart = new Chart(amountCtx, {
         type: 'bar',
         data: {
-            labels: ['Min', 'Avg', 'Max'],
-            datasets: [{ label: 'Original Loan Amount', data: [numFields.min, numFields.avg, numFields.max], backgroundColor: '#10b981' }]
+            labels: ['Min', 'Avg', 'Max', 'StdDev'],
+            datasets: [{
+                label: 'Original Loan Amount',
+                data: [numFields.min ?? 0, numFields.avg ?? 0, numFields.max ?? 0, numFields.stddev ?? 0],
+                backgroundColor: '#10b981'
+            }]
         },
         options: { responsive: true, plugins: { title: { display: true, text: 'Loan Amount Stats' } } }
     });
+
+    const nullDist = (data.charts?.null_fields_distribution || data.summary?.null_fields_distribution || [])
+        .slice()
+        .sort((a, b) => (b.ratio_percent ?? b.ratio * 100) - (a.ratio_percent ?? a.ratio * 100))
+        .slice(0, 10);
+    const nullCtx = document.getElementById('nullChart').getContext('2d');
+    if (nullChart) nullChart.destroy();
+    nullChart = new Chart(nullCtx, {
+        type: 'bar',
+        data: {
+            labels: nullDist.map(d => fieldLabel(d.field)),
+            datasets: [{
+                label: 'Missing %',
+                data: nullDist.map(d => d.ratio_percent ?? (Number(d.ratio) * 100)),
+                backgroundColor: '#f59e0b'
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: { title: { display: true, text: 'Top Missing Fields' } },
+            scales: { x: { beginAtZero: true, max: 100 } }
+        }
+    });
 }
 
-async function loadData() {
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function renderCreditTable(credits) {
+    if (!credits.length) {
+        return '<p class="text-slate-500">No data synced yet.</p>';
+    }
+
+    const headers = [
+        ['loan_account_number', 'Account'],
+        ['customer_id', 'Customer'],
+        ['customer_type', 'Type'],
+        ['loan_status_code', 'Status'],
+        ['days_past_due', 'DPD'],
+        ['original_loan_amount', 'Original Amount'],
+        ['outstanding_principal_balance', 'Outstanding'],
+        ['nominal_interest_rate', 'Rate'],
+        ['final_maturity_date', 'Maturity'],
+        ['loan_start_date', 'Start Date'],
+        ['total_installment_count', 'Installments'],
+        ['internal_rating', 'Int. Rating'],
+        ['external_rating', 'Ext. Rating'],
+    ];
+
+    let html = '<table class="min-w-full"><thead><tr class="text-left border-b bg-slate-50">';
+    headers.forEach(([, label]) => {
+        html += `<th class="py-2 px-3 whitespace-nowrap">${label}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    credits.forEach((credit) => {
+        html += '<tr class="border-b hover:bg-slate-50">';
+        headers.forEach(([key]) => {
+            html += `<td class="py-2 px-3 whitespace-nowrap">${escapeHtml(credit[key])}</td>`;
+        });
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    return html;
+}
+
+function renderCreditPagination(pagination) {
+    if (!pagination || pagination.total_count === 0) {
+        return '';
+    }
+
+    const start = ((pagination.page - 1) * pagination.page_size) + 1;
+    const end = Math.min(pagination.page * pagination.page_size, pagination.total_count);
+    const prevPage = pagination.page - 1;
+    const nextPage = pagination.page + 1;
+
+    return `
+        <p class="text-sm text-slate-600">
+            Showing ${start}-${end} of ${pagination.total_count} credits
+        </p>
+        <div class="flex items-center gap-2">
+            <button type="button" data-credit-page="${prevPage}"
+                    ${pagination.has_previous ? '' : 'disabled'}
+                    class="px-3 py-1 border rounded text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">
+                Previous
+            </button>
+            <span class="text-sm text-slate-600">Page ${pagination.page} of ${pagination.total_pages}</span>
+            <button type="button" data-credit-page="${nextPage}"
+                    ${pagination.has_next ? '' : 'disabled'}
+                    class="px-3 py-1 border rounded text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">
+                Next
+            </button>
+        </div>
+    `;
+}
+
+async function loadData(page) {
+    const targetPage = Math.max(1, Number(page) || 1);
+    creditPage = targetPage;
     const loanType = document.getElementById('loan').value;
-    const res = await fetch('/api/data?loan_type=' + loanType, { headers: authHeaders() });
+    const tableEl = document.getElementById('data-table');
+    const paginationEl = document.getElementById('data-pagination');
+
+    tableEl.innerHTML = `<p class="text-slate-500">Loading page ${targetPage}...</p>`;
+
+    const res = await fetch(
+        '/api/data?loan_type=' + encodeURIComponent(loanType) +
+        '&page=' + targetPage +
+        '&page_size=' + CREDIT_PAGE_SIZE,
+        { headers: authHeaders() }
+    );
+
+    if (!res.ok) {
+        tableEl.innerHTML = renderStatusAlert('error', 'Could not load credits', 'Failed to fetch page ' + targetPage + '.', null);
+        paginationEl.innerHTML = '';
+        return;
+    }
+
+    const data = await res.json();
+    const pagination = data.pagination || {};
+    const credits = data.credits || [];
+
+    if (pagination.page) {
+        creditPage = pagination.page;
+    }
+
+    document.getElementById('data-summary').textContent = pagination.total_count
+        ? `${pagination.total_count} total credits${data.extraction_date ? ' · extracted ' + data.extraction_date : ''}`
+        : 'No synced credits for this loan type';
+
+    tableEl.innerHTML = renderCreditTable(credits);
+    paginationEl.innerHTML = renderCreditPagination(pagination);
+}
+
+function attachJobStatus(loanType, jobId) {
+    startSync(loanType);
+    updateBeforeUnload();
+    htmx.ajax('GET', '/api/sync/status/' + jobId, {
+        target: '#status-display-' + loanType,
+        swap: 'innerHTML',
+        headers: authHeaders(),
+    });
+}
+
+async function resumeActiveSync(loanType) {
+    const res = await fetch('/api/sync/active?loan_type=' + loanType, { headers: authHeaders() });
     if (!res.ok) return;
     const data = await res.json();
-    const rows = (data.credits || []).slice(0, 20);
-    let html = '<table class="min-w-full"><thead><tr class="text-left border-b">' +
-        '<th class="py-2 pr-4">Account</th><th class="py-2 pr-4">Customer</th><th class="py-2 pr-4">Status</th><th class="py-2">Amount</th></tr></thead><tbody>';
-    rows.forEach(c => {
-        html += `<tr class="border-b"><td class="py-1 pr-4">${c.loan_account_number}</td>` +
-            `<td class="py-1 pr-4">${c.customer_id}</td><td class="py-1 pr-4">${c.loan_status_code}</td>` +
-            `<td class="py-1">${c.original_loan_amount ?? ''}</td></tr>`;
-    });
-    html += '</tbody></table>';
-    if (!rows.length) html = '<p class="text-slate-500">No data synced yet.</p>';
-    document.getElementById('data-table').innerHTML = html;
+    if (data.active && data.job_id) {
+        attachJobStatus(loanType, data.job_id);
+    }
 }
 
-document.getElementById('sync-btn').addEventListener('click', async (btn) => {
-    const button = document.getElementById('sync-btn');
-    startSync(button);
-    const loanType = document.getElementById('loan').value;
+async function triggerSync(loanType) {
+    startSync(loanType);
+    updateBeforeUnload();
+
     const res = await fetch('/api/sync', {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ loan_type: loanType }),
     });
     const data = await res.json();
-    if (res.status === 409) {
-        document.getElementById('status-display').innerHTML =
-            '<p class="text-amber-600">Sync already running: ' + data.active_job_id + '</p>';
-        endSync();
+
+    if (res.status === 409 && data.active_job_id) {
+        attachJobStatus(loanType, data.active_job_id);
         return;
     }
     if (!res.ok) {
-        document.getElementById('status-display').innerHTML =
-            '<p class="text-red-600">' + (data.error || 'Sync failed') + '</p>';
-        endSync();
+        statusDisplay(loanType).innerHTML = renderStatusAlert(
+            'error',
+            'Could not start sync',
+            data.error || 'Sync failed to start.',
+            null
+        );
+        endSync(loanType);
+        updateBeforeUnload();
         return;
     }
+
     htmx.ajax('GET', '/api/sync/status/' + data.job_id, {
-        target: '#status-display',
+        target: '#status-display-' + loanType,
         swap: 'innerHTML',
         headers: authHeaders(),
     });
+}
+
+LOAN_TYPES.forEach((loanType) => {
+    syncButton(loanType).addEventListener('click', () => triggerSync(loanType));
+    resumeActiveSync(loanType);
 });
 
-document.getElementById('refresh-charts').addEventListener('click', () => { loadProfiling(); loadData(); });
-document.getElementById('loan').addEventListener('change', () => { loadProfiling(); loadData(); });
+document.body.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-credit-page]');
+    if (!button || button.disabled) {
+        return;
+    }
+    event.preventDefault();
+    loadData(Number(button.dataset.creditPage));
+});
+
+document.getElementById('refresh-charts').addEventListener('click', () => { loadProfiling(); loadData(1); });
+document.getElementById('loan').addEventListener('change', () => { creditPage = 1; loadProfiling(); loadData(1); });
 loadProfiling();
-loadData();
+loadData(1);
 </script>
 {% endblock %}

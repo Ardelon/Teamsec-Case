@@ -86,6 +86,60 @@ class CoreAPITestCase(TestCase):
         self.assertEqual(response.data["active_job_id"], "job_existing")
         release_sync_lock(redis_client, "BANK001", "RETAIL", "job_existing")
 
+    @patch("apps.etl.views.run_etl_pipeline.delay")
+    def test_sync_conflict_returns_active_job(self, mock_delay):
+        redis_client = get_redis_client()
+        job = ETLJob.objects.create(
+            job_id="job_existing",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_PROCESSING,
+            progress_percentage=42,
+            processed_rows=1200,
+        )
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job.job_id)
+        response = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json", **self.auth)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["active_job_id"], job.job_id)
+        self.assertEqual(response.data["active_job"]["progress_percentage"], 42)
+        self.assertEqual(response.data["active_job"]["processed_rows"], 1200)
+        mock_delay.assert_not_called()
+        release_sync_lock(redis_client, "BANK001", "RETAIL", job.job_id)
+
+    def test_active_sync_returns_running_job(self):
+        redis_client = get_redis_client()
+        job = ETLJob.objects.create(
+            job_id="job_active",
+            tenant_id="BANK001",
+            loan_type="COMMERCIAL",
+            status=ETLJob.STATUS_PROCESSING,
+            progress_percentage=75,
+            processed_rows=5000,
+        )
+        acquire_sync_lock(redis_client, "BANK001", "COMMERCIAL", job.job_id)
+        response = self.client.get("/api/sync/active?loan_type=COMMERCIAL", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["active"])
+        self.assertEqual(response.data["job_id"], job.job_id)
+        self.assertEqual(response.data["progress_percentage"], 75)
+        release_sync_lock(redis_client, "BANK001", "COMMERCIAL", job.job_id)
+
+    def test_active_sync_returns_inactive_when_no_lock(self):
+        response = self.client.get("/api/sync/active?loan_type=RETAIL", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["active"])
+
+    @patch("apps.etl.views.run_etl_pipeline.delay")
+    def test_sync_retail_and_commercial_in_parallel(self, mock_delay):
+        retail = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json", **self.auth)
+        commercial = self.client.post("/api/sync", {"loan_type": "COMMERCIAL"}, format="json", **self.auth)
+        self.assertEqual(retail.status_code, 202)
+        self.assertEqual(commercial.status_code, 202)
+        self.assertNotEqual(retail.data["job_id"], commercial.data["job_id"])
+        self.assertEqual(mock_delay.call_count, 2)
+        release_sync_lock(get_redis_client(), "BANK001", "RETAIL", retail.data["job_id"])
+        release_sync_lock(get_redis_client(), "BANK001", "COMMERCIAL", commercial.data["job_id"])
+
     def test_tenant_mismatch_forbidden(self):
         response = self.client.get("/api/data?loan_type=RETAIL&tenant_id=BANK002", **self.auth)
         self.assertEqual(response.status_code, 403)
@@ -108,12 +162,100 @@ class CoreAPITestCase(TestCase):
         response = self.client.get("/api/data?loan_type=RETAIL", **self.auth)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["credits"], [])
+        self.assertEqual(response.data["pagination"]["total_count"], 0)
+
+    def test_data_snapshot_pagination(self):
+        from apps.etl.models import CreditRecord
+
+        for index in range(1, 6):
+            CreditRecord.objects.create(
+                tenant_id="BANK001",
+                loan_type="RETAIL",
+                loan_account_number=f"LOAN_{index:03d}",
+                customer_id=f"CUST_{index:03d}",
+                loan_status_code="A",
+            )
+
+        response = self.client.get("/api/data?loan_type=RETAIL&page=1&page_size=2", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["credits"]), 2)
+        self.assertEqual(response.data["pagination"]["total_count"], 5)
+        self.assertEqual(response.data["pagination"]["total_pages"], 3)
+        self.assertTrue(response.data["pagination"]["has_next"])
+        self.assertFalse(response.data["pagination"]["has_previous"])
+
+        response = self.client.get("/api/data?loan_type=RETAIL&page=3&page_size=2", **self.auth)
+        self.assertEqual(len(response.data["credits"]), 1)
+        self.assertFalse(response.data["pagination"]["has_next"])
+        self.assertTrue(response.data["pagination"]["has_previous"])
 
     def test_profiling_empty(self):
         response = self.client.get("/api/profiling?loan_type=RETAIL", **self.auth)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["total_records_processed"], 0)
         self.assertIn("charts", response.data)
+        self.assertIn("numerical_fields", response.data)
+        self.assertIn("categorical_fields", response.data)
+        self.assertIn("null_fields_distribution", response.data["summary"])
+
+    def test_profiling_with_records(self):
+        from apps.etl.models import CreditRecord, PaymentInstallment
+
+        credit = CreditRecord.objects.create(
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            loan_account_number="LOAN_P1",
+            customer_type="V",
+            loan_status_code="A",
+            original_loan_amount="1000.00",
+            outstanding_principal_balance="500.00",
+            nominal_interest_rate="1.25",
+            days_past_due=0,
+        )
+        CreditRecord.objects.create(
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            loan_account_number="LOAN_P2",
+            customer_type="V",
+            loan_status_code="K",
+            original_loan_amount="3000.00",
+            outstanding_principal_balance=None,
+            nominal_interest_rate="2.50",
+            days_past_due=None,
+        )
+        PaymentInstallment.objects.create(
+            credit=credit,
+            installment_number=1,
+            installment_amount="100.00",
+            principal_component="80.00",
+            installment_status="K",
+        )
+
+        response = self.client.get("/api/profiling?loan_type=RETAIL", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total_records"], 2)
+        self.assertEqual(response.data["total_payments"], 1)
+
+        amount = response.data["numerical_fields"]["original_loan_amount"]
+        self.assertEqual(amount["min"], 1000.0)
+        self.assertEqual(amount["max"], 3000.0)
+        self.assertEqual(amount["avg"], 2000.0)
+        self.assertIsNotNone(amount["stddev"])
+
+        status = response.data["categorical_fields"]["loan_status_code"]
+        self.assertEqual(status["unique_values_count"], 2)
+        self.assertIn(status["most_frequent_value"], {"A", "K"})
+
+        null_map = {
+            item["field"]: item["ratio"]
+            for item in response.data["summary"]["null_fields_distribution"]
+        }
+        self.assertEqual(null_map["days_past_due"], 0.5)
+        self.assertEqual(null_map["outstanding_principal_balance"], 0.5)
+        self.assertEqual(
+            response.data["payments"]["numerical_fields"]["installment_amount"]["avg"],
+            100.0,
+        )
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
     @patch("adapter_core.execute_etl_pipeline", return_value=_mock_pipeline_result())

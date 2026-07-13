@@ -88,8 +88,15 @@ class ExternalBankAPITestCase(TestCase):
             {"tenant_id": "BANK001", "loan_type": "RETAIL"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response["Content-Type"], "text/csv")
-        self.assertEqual(b"".join(response.streaming_content), self.credit_content)
+        self.assertEqual(response["Content-Type"], "application/json")
+        payload = response.json()
+        self.assertEqual(
+            payload,
+            [
+                {"loan_id": "L001", "amount": "1000.00"},
+                {"loan_id": "L002", "amount": "2000.00"},
+            ],
+        )
 
     def test_export_payments_without_multiply(self):
         self._upload()
@@ -98,7 +105,11 @@ class ExternalBankAPITestCase(TestCase):
             {"tenant_id": "BANK001", "loan_type": "RETAIL"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(b"".join(response.streaming_content), self.payment_content)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertEqual(
+            response.json(),
+            [{"loan_id": "L001", "due_date": "2026-01-01", "amount": "100.00"}],
+        )
 
     def test_export_with_multiply_produces_larger_output(self):
         self._upload()
@@ -107,8 +118,9 @@ class ExternalBankAPITestCase(TestCase):
             {"tenant_id": "BANK001", "loan_type": "RETAIL", "multiply": "true"},
         )
         self.assertEqual(response.status_code, 200)
-        content = b"".join(response.streaming_content)
-        self.assertGreater(len(content), len(self.credit_content))
+        payload = response.json()
+        self.assertIsInstance(payload, list)
+        self.assertGreater(len(payload), 2)
 
     def test_health_endpoint(self):
         response = self.client.get("/health/")
