@@ -75,7 +75,7 @@ Default Django/JWT secret keys in Compose are demo-only — do not use outside l
 
 - Demo secrets, `DEBUG`, and open bank simulator are for local demos only.
 - Bank export/upload APIs are intentionally unauthenticated.
-- Sync cancel is cooperative: the progress callback polls a Redis cancel flag and Rust aborts before commit. Celery `revoke` + SIGTERM remains a fallback for stuck workers.
+- Sync cancel is cooperative: the progress callback polls a Redis cancel flag and Rust aborts before commit. Celery soft-revokes queued tasks; **PROCESSING** jobs keep the Redis slice lock until the worker exits so a re-sync cannot overwrite mid-rollback.
 - API tests expect reachable Redis and Postgres (as configured in settings).
 - The API image builds the Rust adapter for a shared Dockerfile layout; only the worker needs `adapter_core` at runtime.
 - Warehouse snapshot money fields are serialized as decimal strings (not floats). Profiling aggregates remain IEEE floats for charting.

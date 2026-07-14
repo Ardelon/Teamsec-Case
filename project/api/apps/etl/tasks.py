@@ -6,6 +6,10 @@ from apps.core.services.redis_lock import get_redis_client, release_sync_lock
 from apps.etl.models import ETLJob
 from apps.etl.services.cancel_sync import clear_cancel_flags, is_cancel_requested
 
+# Bound JSON stored on ETLJob / returned via JobStatusSerializer.
+MAX_STORED_JOB_ERRORS = 50
+SAFE_PIPELINE_FAILURE = "ETL pipeline failed"
+
 
 def _database_url() -> str:
     db = settings.DATABASES["default"]
@@ -43,19 +47,27 @@ def _serialize_error_logs(error_logs) -> list[dict]:
     return serialized
 
 
+def _trim_stored_errors(errors: list[dict]) -> list[dict]:
+    if len(errors) <= MAX_STORED_JOB_ERRORS:
+        return errors
+    return errors[-MAX_STORED_JOB_ERRORS:]
+
+
 def _make_progress_callback(job: ETLJob):
     def on_progress(processed_rows: int, progress_percentage: int, errors):
         if is_cancel_requested(job.job_id):
             return False
-        serialized_errors = [
-            {
-                "row_number": item[0],
-                "field": item[1],
-                "error_type": item[2],
-                "message": item[3],
-            }
-            for item in errors
-        ]
+        serialized_errors = _trim_stored_errors(
+            [
+                {
+                    "row_number": item[0],
+                    "field": item[1],
+                    "error_type": item[2],
+                    "message": item[3],
+                }
+                for item in errors
+            ]
+        )
         _update_job(
             job,
             processed_rows=processed_rows,
@@ -109,12 +121,13 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
         if getattr(result, "cancelled", False):
             return {"cancelled": True}
 
-        errors = _serialize_error_logs(result.error_logs)
-        error_count = len(errors)
+        all_errors = _serialize_error_logs(result.error_logs)
+        error_count = len(all_errors)
+        stored_errors = _trim_stored_errors(all_errors)
         validation_summary = {
             "is_valid": result.success and error_count == 0,
             "error_count": error_count,
-            "critical_failures": errors[:10],
+            "critical_failures": stored_errors[:10],
         }
 
         final_status = ETLJob.STATUS_COMPLETED if result.success else ETLJob.STATUS_FAILED
@@ -124,7 +137,7 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
             completed_at=dj_timezone.now(),
             progress_percentage=100,
             processed_rows=result.processed_rows_count,
-            errors=errors,
+            errors=stored_errors,
             validation_summary=validation_summary,
             result=(
                 f"Ingested {result.metrics.total_credits_ingested} credits and "
@@ -134,12 +147,15 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
         )
 
         if not result.success:
-            raise RuntimeError(errors[0]["message"] if errors else "ETL pipeline failed")
+            raise RuntimeError(
+                stored_errors[0]["message"] if stored_errors else SAFE_PIPELINE_FAILURE
+            )
 
         return {
             "credits_ingested": result.metrics.total_credits_ingested,
             "payments_ingested": result.metrics.total_payments_ingested,
-            "errors": errors,
+            "errors": stored_errors,
+            "error_count": error_count,
         }
     except Exception as exc:
         job.refresh_from_db()
@@ -149,18 +165,18 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
             "row_number": 0,
             "field": "pipeline",
             "error_type": "PIPELINE_ERROR",
-            "message": str(exc),
+            "message": SAFE_PIPELINE_FAILURE,
         }
         _update_job(
             job,
             status=ETLJob.STATUS_FAILED,
             completed_at=dj_timezone.now(),
-            result=str(exc),
+            result=str(exc)[:500],
             errors=[error],
             validation_summary={
                 "is_valid": False,
                 "error_count": 1,
-                "critical_failures": [str(exc)],
+                "critical_failures": [SAFE_PIPELINE_FAILURE],
             },
         )
         raise

@@ -184,7 +184,7 @@ class CoreAPITestCase(TestCase):
         release_sync_lock(get_redis_client(), "BANK001", "RETAIL", retail.data["job_id"])
         release_sync_lock(get_redis_client(), "BANK001", "COMMERCIAL", commercial.data["job_id"])
 
-    def test_cancel_sync_job(self):
+    def test_cancel_processing_keeps_lock(self):
         redis_client = get_redis_client()
         job = ETLJob.objects.create(
             job_id="job_to_cancel",
@@ -201,6 +201,57 @@ class CoreAPITestCase(TestCase):
         self.assertEqual(response.data["status"], "CANCELLED")
         job.refresh_from_db()
         self.assertEqual(job.status, ETLJob.STATUS_CANCELLED)
+        # Lock stays with the cancelled job until the worker finally releases it.
+        self.assertEqual(get_active_job_id(redis_client, "BANK001", "RETAIL"), job.job_id)
+
+    def test_cancel_processing_blocks_immediate_resync(self):
+        redis_client = get_redis_client()
+        job = ETLJob.objects.create(
+            job_id="job_block_resync",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_PROCESSING,
+            progress_percentage=40,
+        )
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job.job_id)
+        with patch("apps.etl.services.cancel_sync.AsyncResult") as mock_result:
+            mock_result.return_value.revoke = lambda *args, **kwargs: None
+            cancel = self.client.post(f"/api/sync/cancel/{job.job_id}", **self.auth)
+        self.assertEqual(cancel.status_code, 200)
+
+        with patch("apps.etl.views.run_etl_pipeline.delay") as mocked_delay:
+            mocked_delay.return_value.id = "task-should-not-run"
+            resync = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json", **self.auth)
+        self.assertEqual(resync.status_code, 409)
+        self.assertEqual(resync.data["active_job_id"], job.job_id)
+        self.assertEqual(resync.data["active_job"]["job_id"], job.job_id)
+
+    def test_cancel_queued_releases_lock(self):
+        redis_client = get_redis_client()
+        job = ETLJob.objects.create(
+            job_id="job_queued_cancel",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_QUEUED,
+        )
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job.job_id)
+        with patch("apps.etl.services.cancel_sync.AsyncResult") as mock_result:
+            mock_result.return_value.revoke = lambda *args, **kwargs: None
+            response = self.client.post(f"/api/sync/cancel/{job.job_id}", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(get_active_job_id(redis_client, "BANK001", "RETAIL"))
+
+    def test_worker_releases_lock_after_cancel(self):
+        redis_client = get_redis_client()
+        job = ETLJob.objects.create(
+            job_id="job_worker_cancel_lock",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_CANCELLED,
+        )
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job.job_id)
+        result = run_etl_pipeline(job.job_id, "BANK001", "RETAIL")
+        self.assertEqual(result, {"cancelled": True})
         self.assertIsNone(get_active_job_id(redis_client, "BANK001", "RETAIL"))
 
     def test_cancel_completed_job_rejected(self):
@@ -228,6 +279,81 @@ class CoreAPITestCase(TestCase):
         mark_cancel_requested(job.job_id)
         self.assertFalse(callback(20, 40, []))
         clear_cancel_flags(job.job_id)
+
+    def test_progress_callback_trims_stored_errors(self):
+        from apps.etl.tasks import MAX_STORED_JOB_ERRORS, _make_progress_callback
+
+        job = ETLJob.objects.create(
+            job_id="job_cb_trim_errors",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_PROCESSING,
+        )
+        callback = _make_progress_callback(job)
+        bulk = [
+            (i, "amount", "INVALID_DECIMAL", f"bad-{i}")
+            for i in range(MAX_STORED_JOB_ERRORS + 25)
+        ]
+        self.assertTrue(callback(100, 50, bulk))
+        job.refresh_from_db()
+        self.assertEqual(len(job.errors), MAX_STORED_JOB_ERRORS)
+        self.assertEqual(job.errors[0]["message"], "bad-25")
+        self.assertEqual(job.errors[-1]["message"], f"bad-{MAX_STORED_JOB_ERRORS + 24}")
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+    @patch("adapter_core.execute_etl_pipeline")
+    def test_pipeline_stores_trimmed_errors_with_full_count(self, mock_rust):
+        from apps.etl.tasks import MAX_STORED_JOB_ERRORS
+
+        logs = [
+            SimpleNamespace(
+                row_number=i,
+                field="amount",
+                error_type="INVALID_DECIMAL",
+                message=f"row-{i}",
+            )
+            for i in range(MAX_STORED_JOB_ERRORS + 10)
+        ]
+        mock_rust.return_value = _mock_pipeline_result(
+            success=True,
+            processed_rows_count=100,
+            error_logs=logs,
+        )
+        redis_client = get_redis_client()
+        job_id = "job_trim_final_errors"
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job_id)
+        ETLJob.objects.create(
+            job_id=job_id,
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_QUEUED,
+        )
+        run_etl_pipeline(job_id, "BANK001", "RETAIL")
+        job = ETLJob.objects.get(job_id=job_id)
+        self.assertEqual(len(job.errors), MAX_STORED_JOB_ERRORS)
+        self.assertEqual(job.validation_summary["error_count"], MAX_STORED_JOB_ERRORS + 10)
+
+    def test_pipeline_failure_hides_exception_in_public_errors(self):
+        redis_client = get_redis_client()
+        job_id = "job_safe_fail"
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job_id)
+        ETLJob.objects.create(
+            job_id=job_id,
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_QUEUED,
+        )
+        with patch(
+            "adapter_core.execute_etl_pipeline",
+            side_effect=RuntimeError("Database error: relation does not exist DETAIL: secret"),
+        ):
+            with self.assertRaises(RuntimeError):
+                run_etl_pipeline(job_id, "BANK001", "RETAIL")
+        job = ETLJob.objects.get(job_id=job_id)
+        self.assertEqual(job.status, ETLJob.STATUS_FAILED)
+        self.assertEqual(job.errors[0]["message"], "ETL pipeline failed")
+        self.assertNotIn("relation does not exist", job.errors[0]["message"])
+        self.assertIn("Database error", job.result)
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
     @patch(
@@ -367,6 +493,19 @@ class CoreAPITestCase(TestCase):
             response.data["payments"]["numerical_fields"]["installment_amount"]["avg"],
             100.0,
         )
+
+        sensitive = {
+            "total_interest_amount",
+            "kkdf_rate",
+            "kkdf_amount",
+            "bsmv_rate",
+            "bsmv_amount",
+            "grace_period_months",
+            "installment_frequency",
+        }
+        self.assertTrue(sensitive.isdisjoint(response.data["numerical_fields"]))
+        null_fields = {item["field"] for item in response.data["summary"]["null_fields_distribution"]}
+        self.assertTrue(sensitive.isdisjoint(null_fields))
 
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
     @patch("adapter_core.execute_etl_pipeline", return_value=_mock_pipeline_result())

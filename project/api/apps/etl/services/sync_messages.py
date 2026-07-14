@@ -1,6 +1,3 @@
-import re
-
-
 def humanize_sync_error(message: str, tenant_id: str = "", loan_type: str = "") -> dict:
     text = (message or "").strip()
     tenant = tenant_id or "your bank"
@@ -50,13 +47,13 @@ def humanize_sync_error(message: str, tenant_id: str = "", loan_type: str = "") 
         return {
             "title": "Could not save synced data",
             "message": "Data was fetched but could not be written to the warehouse.",
-            "hint": re.sub(r"^Database error:\s*", "", text) or None,
+            "hint": "Check warehouse connectivity and try again. Details are kept in server logs.",
             "code": "DATABASE_ERROR",
         }
 
     return {
         "title": "Sync failed",
-        "message": re.sub(r"^(HTTP error:|Database error:)\s*", "", text) or "An unexpected error occurred during sync.",
+        "message": "An unexpected error occurred during sync.",
         "hint": None,
         "code": "PIPELINE_ERROR",
     }

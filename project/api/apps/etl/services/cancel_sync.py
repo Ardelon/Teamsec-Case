@@ -43,13 +43,14 @@ def cancel_sync_job(job: ETLJob) -> ETLJob:
         raise ValueError("Only queued or processing jobs can be cancelled")
 
     redis_client = get_redis_client()
+    was_queued = job.status == ETLJob.STATUS_QUEUED
     mark_cancel_requested(job.job_id)
 
-    # Soft cancel is preferred: Rust polls the progress callback.
-    # SIGTERM remains a fallback for stuck workers.
+    # Soft revoke only: discard if not started. Avoid SIGTERM so a running
+    # worker can release the slice lock in its finally block.
     task_id = get_celery_task_id(job.job_id)
     if task_id:
-        AsyncResult(task_id).revoke(terminate=True, signal="SIGTERM")
+        AsyncResult(task_id).revoke(terminate=False)
 
     error = {
         "row_number": 0,
@@ -76,6 +77,11 @@ def cancel_sync_job(job: ETLJob) -> ETLJob:
             "updated_at",
         ]
     )
-    release_sync_lock(redis_client, job.tenant_id, job.loan_type, job.job_id)
+
+    # QUEUED never enters the worker finally → free the lock here.
+    # PROCESSING keeps the lock until the worker observes cancel and exits.
+    if was_queued:
+        release_sync_lock(redis_client, job.tenant_id, job.loan_type, job.job_id)
+
     redis_client.delete(celery_task_key(job.job_id))
     return job

@@ -56,7 +56,7 @@ Headless Celery worker container. Builds and installs `adapter_core` at image bu
 2. `core_backend_api` acquires a Redis lock (`lock:{tenant}:{loan_type}`), creates an `ETLJob`, and enqueues Celery.
 3. `background_worker` calls `adapter_core.execute_etl_pipeline()` with bank export URLs and the warehouse DB URL.
 4. Rust adapter streams credits then payments, validates rows, and commits a tenant snapshot to `postgres_warehouse`.
-5. Progress updates the Django job record; the lock is released when the task finishes or is cancelled. Cancel sets a Redis flag; the Python progress callback returns `false` so Rust aborts before commit (open snapshot txn rolls back). Celery `revoke(terminate=True)` remains a fallback for stuck workers.
+5. Progress updates the Django job record; the lock is released when the Celery task exits (`finally`). Cancel sets a Redis flag and soft-revokes the task; the Python progress callback returns `false` so Rust aborts before commit (open snapshot txn rolls back). For **PROCESSING** jobs the lock stays held until that worker finishes so a new sync cannot write the same slice concurrently. **QUEUED** cancels release the lock immediately (no writer started).
 
 ## Validation Policy
 

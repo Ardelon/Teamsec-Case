@@ -1,11 +1,11 @@
 import datetime
-from collections import Counter
 
 from django.db.models import Avg, Count, Max, Min, Q, StdDev
 from django.utils import timezone as dj_timezone
 
 from apps.etl.models import CreditRecord, PaymentInstallment
 
+# Aligned with public warehouse credit DTO (apps.etl.services.warehouse).
 NUMERICAL_FIELDS = (
     "days_past_due",
     "total_installment_count",
@@ -14,13 +14,6 @@ NUMERICAL_FIELDS = (
     "original_loan_amount",
     "outstanding_principal_balance",
     "nominal_interest_rate",
-    "total_interest_amount",
-    "kkdf_rate",
-    "kkdf_amount",
-    "bsmv_rate",
-    "bsmv_amount",
-    "grace_period_months",
-    "installment_frequency",
     "internal_rating",
     "external_rating",
 )
@@ -53,13 +46,6 @@ NULL_RATIO_FIELDS = (
     "original_loan_amount",
     "outstanding_principal_balance",
     "nominal_interest_rate",
-    "total_interest_amount",
-    "kkdf_rate",
-    "kkdf_amount",
-    "bsmv_rate",
-    "bsmv_amount",
-    "grace_period_months",
-    "installment_frequency",
     "loan_start_date",
     "loan_closing_date",
     "internal_rating",
@@ -130,13 +116,17 @@ def _numerical_stats(qs, field_name: str, total: int) -> dict:
 
 def _categorical_stats(qs, field_name: str, total: int) -> dict:
     populated = qs.exclude(_null_filter(field_name))
-    values = list(populated.values_list(field_name, flat=True))
-    counter = Counter(values)
-    most_common = counter.most_common(1)
-    most_frequent_value = most_common[0][0] if most_common else None
-    most_frequent_count = most_common[0][1] if most_common else 0
+    unique_values_count = populated.values(field_name).distinct().count()
+    top = (
+        populated.values(field_name)
+        .annotate(cnt=Count("pk"))
+        .order_by("-cnt", field_name)
+        .first()
+    )
+    most_frequent_value = top[field_name] if top else None
+    most_frequent_count = top["cnt"] if top else 0
     return {
-        "unique_values_count": len(counter),
+        "unique_values_count": unique_values_count,
         "most_frequent_value": most_frequent_value if most_frequent_value is not None else "",
         "most_frequent_count": most_frequent_count,
         "null_ratio": _null_ratio(qs, field_name, total),
@@ -146,9 +136,12 @@ def _categorical_stats(qs, field_name: str, total: int) -> dict:
 
 def _categorical_distribution(qs, field_name: str, limit: int = 15) -> list[dict]:
     populated = qs.exclude(_null_filter(field_name))
-    values = list(populated.values_list(field_name, flat=True))
-    counter = Counter(values)
-    return [{"value": str(value), "count": count} for value, count in counter.most_common(limit)]
+    rows = (
+        populated.values(field_name)
+        .annotate(count=Count("pk"))
+        .order_by("-count", field_name)[:limit]
+    )
+    return [{"value": str(row[field_name]), "count": row["count"]} for row in rows]
 
 
 def build_profiling_payload(tenant_id: str, loan_type: str) -> dict:
