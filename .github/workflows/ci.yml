@@ -3,11 +3,19 @@ name: CI
 on:
   push:
     paths:
-      - "project/**"
+      - "adapter/**"
+      - "api/**"
+      - "external_bank/**"
+      - "tests/**"
+      - "docker-compose.yml"
       - ".github/workflows/ci.yml"
   pull_request:
     paths:
-      - "project/**"
+      - "adapter/**"
+      - "api/**"
+      - "external_bank/**"
+      - "tests/**"
+      - "docker-compose.yml"
       - ".github/workflows/ci.yml"
 
 jobs:
@@ -15,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: project/adapter
+        working-directory: adapter
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: project/api
+        working-directory: api
     services:
       postgres:
         image: postgres:15-alpine

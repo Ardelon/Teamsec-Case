@@ -17,7 +17,6 @@ All services communicate over the internal `teamsec_network` Docker bridge.
 ## Quick Start
 
 ```bash
-cd project
 docker compose up --build
 ```
 
