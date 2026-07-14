@@ -2,13 +2,14 @@ import uuid
 
 import datetime
 
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.etl.models import ETLJob
 
 
 class SyncRequestSerializer(serializers.Serializer):
-    loan_type = serializers.CharField(max_length=32)
+    loan_type = serializers.ChoiceField(choices=list(settings.LOAN_TYPES))
     tenant_id = serializers.CharField(max_length=64, required=False)
 
 
@@ -64,7 +65,6 @@ class JobStatusSerializer(serializers.ModelSerializer):
                     "field": err.get("field"),
                     "error_type": err.get("error_type"),
                     "message": err.get("message", err.get("error_message", "")),
-                    "error_message": err.get("message", err.get("error_message", "")),
                 }
             )
         data["errors"] = errors

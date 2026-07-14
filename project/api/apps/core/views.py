@@ -4,9 +4,10 @@ import jwt
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.http import JsonResponse
+from django.middleware.csrf import get_token
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
@@ -17,6 +18,20 @@ from apps.core.models import OperatorProfile
 @permission_classes([AllowAny])
 def health(request: Request):
     return JsonResponse({"status": "ok", "service": "core_backend_api"})
+
+
+def _issue_token(username: str, tenant_id: str) -> tuple[str, datetime.datetime]:
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(
+        hours=settings.JWT_EXPIRY_HOURS
+    )
+    payload = {
+        "sub": username,
+        "tenant_id": tenant_id,
+        "exp": expires_at,
+        "iat": datetime.datetime.now(datetime.timezone.utc),
+    }
+    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
+    return token, expires_at
 
 
 @api_view(["POST"])
@@ -42,19 +57,35 @@ def login(request: Request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(hours=settings.JWT_EXPIRY_HOURS)
-    payload = {
-        "sub": username,
-        "tenant_id": tenant_id,
-        "exp": expires_at,
-        "iat": datetime.datetime.utcnow(),
-    }
-    token = jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm="HS256")
+    token, expires_at = _issue_token(username, tenant_id)
+    request.session["operator"] = {"username": username, "tenant_id": tenant_id}
+    request.session.set_expiry(settings.JWT_EXPIRY_HOURS * 3600)
+    get_token(request)
 
     return Response(
         {
-            "token": token,
-            "expires_at": expires_at.replace(tzinfo=datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             "tenant_id": tenant_id,
+            "username": username,
+            "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+            # Bearer token for API tooling only — UI uses the HttpOnly session cookie.
+            "token": token,
+        }
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def logout(request: Request):
+    request.session.flush()
+    return Response({"ok": True})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def session_info(request: Request):
+    return Response(
+        {
+            "username": request.user.username,
+            "tenant_id": request.user.tenant_id,
         }
     )

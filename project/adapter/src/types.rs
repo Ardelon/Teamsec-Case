@@ -19,6 +19,7 @@ pub struct PipelineMetrics {
 #[derive(Debug, Clone)]
 pub struct PipelineResult {
     pub success: bool,
+    pub cancelled: bool,
     pub job_id: String,
     pub processed_rows_count: u64,
     pub execution_duration_seconds: f64,
@@ -78,7 +79,7 @@ pub struct ParsedPayment {
 pub enum PipelineError {
     #[error("HTTP error: {0}")]
     Http(String),
-    #[error("CSV parse error: {0}")]
+    #[error("JSON parse error: {0}")]
     Parse(String),
     #[error("Database error: {0}")]
     Database(String),

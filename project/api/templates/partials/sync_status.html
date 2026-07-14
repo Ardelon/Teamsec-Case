@@ -29,8 +29,7 @@
                     hx-post="/api/sync/cancel/{{ job.job_id }}"
                     hx-target="#status-display-{{ job.loan_type }}"
                     hx-swap="innerHTML"
-                    hx-disabled-elt="this"
-                    hx-headers='js:{"Authorization": "Bearer " + localStorage.getItem("jwt_token")}'>
+                    hx-disabled-elt="this">
                 Cancel Sync
             </button>
             {% else %}
@@ -74,7 +73,7 @@
             <summary class="cursor-pointer hover:text-rose-700">Technical details</summary>
             <ul class="mt-2 list-disc ml-4 space-y-1">
                 {% for err in job.errors|slice:":3" %}
-                <li>{% if err.message %}{{ err.message }}{% else %}{{ err.error_message }}{% endif %}</li>
+                <li>{{ err.message }}</li>
                 {% endfor %}
             </ul>
         </details>
@@ -103,7 +102,7 @@
         <p class="text-xs font-medium text-amber-700">Validation warnings ({{ job.errors|length }})</p>
         <ul class="text-[11px] text-amber-600 list-disc ml-4 mt-1">
             {% for err in job.errors|slice:":5" %}
-            <li>Row {{ err.row_number }} / {{ err.field }}: {% if err.message %}{{ err.message }}{% else %}{{ err.error_message }}{% endif %}</li>
+            <li>Row {{ err.row_number }} / {{ err.field }}: {{ err.message }}</li>
             {% endfor %}
         </ul>
     </div>
@@ -114,8 +113,7 @@
 <div hx-get="/api/sync/status/{{ job.job_id }}"
      hx-trigger="every 3s"
      hx-target="#status-display-{{ job.loan_type }}"
-     hx-swap="innerHTML"
-     hx-headers='js:{"Authorization": "Bearer " + localStorage.getItem("jwt_token")}'>
+     hx-swap="innerHTML">
 </div>
 {% elif job.status == "COMPLETED" %}
 <script>

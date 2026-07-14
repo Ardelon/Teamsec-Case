@@ -68,15 +68,24 @@ impl JsonRowStream {
                 .bytes_stream()
                 .map(|chunk| chunk.map_err(map_reqwest_io_error)),
         );
-        let reader = BufReader::new(StreamReader::new(byte_stream));
+        Ok(Self::from_byte_stream(byte_stream))
+    }
 
-        Ok(Self {
-            reader,
+    fn from_byte_stream(byte_stream: ByteStream) -> Self {
+        Self {
+            reader: BufReader::new(StreamReader::new(byte_stream)),
             buffer: Vec::new(),
             started: false,
             finished: false,
             row_number: 0,
-        })
+        }
+    }
+
+    #[cfg(test)]
+    pub fn from_bytes(data: Vec<u8>) -> Self {
+        let byte_stream: ByteStream =
+            Box::pin(futures_util::stream::once(async move { Ok(Bytes::from(data)) }));
+        Self::from_byte_stream(byte_stream)
     }
 
     pub async fn next_row(&mut self) -> Result<Option<HashMap<String, String>>, PipelineError> {
@@ -216,5 +225,69 @@ impl JsonRowStream {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn streams_empty_array() {
+        let mut stream = JsonRowStream::from_bytes(b"[]".to_vec());
+        assert!(stream.next_row().await.unwrap().is_none());
+        assert_eq!(stream.row_number(), 0);
+    }
+
+    #[tokio::test]
+    async fn streams_two_objects() {
+        let payload = br#"[
+            {"loan_account_number": "LN1", "amount": 10},
+            {"loan_account_number": "LN2", "note": "ok"}
+        ]"#;
+        let mut stream = JsonRowStream::from_bytes(payload.to_vec());
+
+        let first = stream.next_row().await.unwrap().unwrap();
+        assert_eq!(first.get("loan_account_number").unwrap(), "LN1");
+        assert_eq!(first.get("amount").unwrap(), "10");
+        assert_eq!(stream.row_number(), 1);
+
+        let second = stream.next_row().await.unwrap().unwrap();
+        assert_eq!(second.get("loan_account_number").unwrap(), "LN2");
+        assert_eq!(stream.row_number(), 2);
+
+        assert!(stream.next_row().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn handles_braces_inside_strings() {
+        let payload = br#"[{"loan_account_number":"LN{1}","note":"a } b"}]"#;
+        let mut stream = JsonRowStream::from_bytes(payload.to_vec());
+        let row = stream.next_row().await.unwrap().unwrap();
+        assert_eq!(row.get("loan_account_number").unwrap(), "LN{1}");
+        assert_eq!(row.get("note").unwrap(), "a } b");
+        assert!(stream.next_row().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn rejects_non_object_array_items() {
+        let mut stream = JsonRowStream::from_bytes(br#"[1,2]"#.to_vec());
+        let err = stream.next_row().await.unwrap_err();
+        assert!(matches!(err, PipelineError::Parse(_)));
+    }
+
+    #[test]
+    fn object_to_row_stringifies_scalars() {
+        let value = serde_json::json!({
+            "flag": true,
+            "count": 3,
+            "name": "x",
+            "empty": null
+        });
+        let row = object_to_row(value).unwrap();
+        assert_eq!(row.get("flag").unwrap(), "true");
+        assert_eq!(row.get("count").unwrap(), "3");
+        assert_eq!(row.get("name").unwrap(), "x");
+        assert_eq!(row.get("empty").unwrap(), "");
     }
 }

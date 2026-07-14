@@ -19,14 +19,17 @@ class _MockPipelineResult(SimpleNamespace):
     pass
 
 
-def _mock_pipeline_result():
-    return _MockPipelineResult(
+def _mock_pipeline_result(**kwargs):
+    defaults = dict(
         success=True,
+        cancelled=False,
         processed_rows_count=2,
         execution_duration_seconds=0.1,
         metrics=_MockMetrics(total_credits_ingested=1, total_payments_ingested=1),
         error_logs=[],
     )
+    defaults.update(kwargs)
+    return _MockPipelineResult(**defaults)
 
 
 class CoreAPITestCase(TestCase):
@@ -40,21 +43,48 @@ class CoreAPITestCase(TestCase):
             {"username": "operator_admin", "password": "secure_cleartext_password", "tenant_id": "BANK001"},
             format="json",
         )
+        self.assertEqual(login.status_code, 200)
+        self.assertIn("operator", self.client.session)
         self.token = login.data["token"]
+        # Cookie session is primary; Bearer kept for API-client coverage.
         self.auth = {"HTTP_AUTHORIZATION": f"Bearer {self.token}"}
 
     def tearDown(self):
         get_redis_client().delete("lock:BANK001:RETAIL", "lock:BANK001:COMMERCIAL")
 
     def test_login_success(self):
-        response = self.client.post(
+        client = APIClient()
+        response = client.post(
             "/api/auth/login",
             {"username": "operator_admin", "password": "secure_cleartext_password", "tenant_id": "BANK001"},
             format="json",
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("token", response.data)
         self.assertEqual(response.data["tenant_id"], "BANK001")
+        self.assertIn("operator", client.session)
+        self.assertEqual(client.session["operator"]["tenant_id"], "BANK001")
+
+        session = client.get("/api/auth/session")
+        self.assertEqual(session.status_code, 200)
+        self.assertEqual(session.data["tenant_id"], "BANK001")
+
+    def test_login_sets_session_not_required_for_local_storage(self):
+        """Authenticated API calls work with session cookie alone (no Bearer)."""
+        client = APIClient()
+        client.post(
+            "/api/auth/login",
+            {"username": "operator_admin", "password": "secure_cleartext_password", "tenant_id": "BANK001"},
+            format="json",
+        )
+        response = client.get("/api/data?loan_type=RETAIL")
+        self.assertEqual(response.status_code, 200)
+
+    def test_logout_clears_session(self):
+        response = self.client.post("/api/auth/logout")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("operator", self.client.session)
+        denied = self.client.get("/api/auth/session")
+        self.assertIn(denied.status_code, (401, 403))
 
     def test_login_invalid_credentials(self):
         response = self.client.post(
@@ -65,8 +95,12 @@ class CoreAPITestCase(TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_sync_requires_auth(self):
-        response = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json")
-        self.assertEqual(response.status_code, 403)
+        response = APIClient().post("/api/sync", {"loan_type": "RETAIL"}, format="json")
+        self.assertIn(response.status_code, (401, 403))
+
+    def test_sync_rejects_invalid_loan_type(self):
+        response = self.client.post("/api/sync", {"loan_type": "MORTGAGE"}, format="json", **self.auth)
+        self.assertEqual(response.status_code, 400)
 
     @patch("apps.etl.views.run_etl_pipeline.delay")
     def test_sync_queues_job(self, mock_delay):
@@ -82,6 +116,12 @@ class CoreAPITestCase(TestCase):
     def test_sync_lock_conflict(self, mock_delay):
         mock_delay.return_value = SimpleNamespace(id="celery-task-1")
         redis_client = get_redis_client()
+        ETLJob.objects.create(
+            job_id="job_existing",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_PROCESSING,
+        )
         acquire_sync_lock(redis_client, "BANK001", "RETAIL", "job_existing")
         response = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json", **self.auth)
         self.assertEqual(response.status_code, 409)
@@ -173,6 +213,41 @@ class CoreAPITestCase(TestCase):
         response = self.client.post(f"/api/sync/cancel/{job.job_id}", **self.auth)
         self.assertEqual(response.status_code, 400)
 
+    def test_progress_callback_returns_false_when_cancel_requested(self):
+        from apps.etl.services.cancel_sync import clear_cancel_flags, mark_cancel_requested
+        from apps.etl.tasks import _make_progress_callback
+
+        job = ETLJob.objects.create(
+            job_id="job_cb_cancel",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_PROCESSING,
+        )
+        callback = _make_progress_callback(job)
+        self.assertTrue(callback(10, 20, []))
+        mark_cancel_requested(job.job_id)
+        self.assertFalse(callback(20, 40, []))
+        clear_cancel_flags(job.job_id)
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+    @patch(
+        "adapter_core.execute_etl_pipeline",
+        return_value=_mock_pipeline_result(cancelled=True, success=False, processed_rows_count=5),
+    )
+    def test_pipeline_aborts_when_adapter_reports_cancelled(self, _mock_rust):
+        redis_client = get_redis_client()
+        job_id = "job_adapter_cancel"
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job_id)
+        ETLJob.objects.create(
+            job_id=job_id,
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_QUEUED,
+        )
+        result = run_etl_pipeline(job_id, "BANK001", "RETAIL")
+        self.assertEqual(result, {"cancelled": True})
+        self.assertIsNone(get_redis_client().get("lock:BANK001:RETAIL"))
+
     def test_tenant_mismatch_forbidden(self):
         response = self.client.get("/api/data?loan_type=RETAIL&tenant_id=BANK002", **self.auth)
         self.assertEqual(response.status_code, 403)
@@ -207,11 +282,14 @@ class CoreAPITestCase(TestCase):
                 loan_account_number=f"LOAN_{index:03d}",
                 customer_id=f"CUST_{index:03d}",
                 loan_status_code="A",
+                original_loan_amount="1000.5000" if index == 1 else None,
             )
 
         response = self.client.get("/api/data?loan_type=RETAIL&page=1&page_size=2", **self.auth)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.data["credits"]), 2)
+        self.assertEqual(response.data["credits"][0]["original_loan_amount"], "1000.5000")
+        self.assertIsInstance(response.data["credits"][0]["original_loan_amount"], str)
         self.assertEqual(response.data["pagination"]["total_count"], 5)
         self.assertEqual(response.data["pagination"]["total_pages"], 3)
         self.assertTrue(response.data["pagination"]["has_next"])
@@ -302,4 +380,3 @@ class CoreAPITestCase(TestCase):
         self.assertEqual(job.status, ETLJob.STATUS_COMPLETED)
         self.assertEqual(job.processed_rows, 2)
         self.assertIsNone(get_redis_client().get("lock:BANK001:RETAIL"))
-        self.assertIsNotNone(get_redis_client().get(f"job:state:{job_id}"))

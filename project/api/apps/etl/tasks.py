@@ -1,6 +1,3 @@
-import json
-from datetime import timezone
-
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone as dj_timezone
@@ -26,58 +23,36 @@ def _bank_urls(tenant_id: str, loan_type: str) -> tuple[str, str]:
     return credits_url, payments_url
 
 
-def _iso_timestamp(value=None) -> str:
-    if value is None:
-        value = dj_timezone.now()
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
 def _update_job(job: ETLJob, **fields):
     for key, value in fields.items():
         setattr(job, key, value)
     job.save(update_fields=[*fields.keys(), "updated_at"])
 
 
-def _update_job_state(redis_client, job: ETLJob, errors: list | None = None):
-    payload = {
-        "job_id": job.job_id,
-        "tenant_id": job.tenant_id,
-        "loan_type": job.loan_type,
-        "status": job.status,
-        "progress_percentage": job.progress_percentage,
-        "processed_rows": job.processed_rows,
-        "started_at": _iso_timestamp(job.started_at) if job.started_at else None,
-        "updated_at": _iso_timestamp(),
-        "errors": errors if errors is not None else (job.errors or []),
-    }
-    redis_client.set(f"job:state:{job.job_id}", json.dumps(payload), ex=86400)
-
-
 def _serialize_error_logs(error_logs) -> list[dict]:
     serialized = []
     for err in error_logs:
-        message = err.message
         serialized.append(
             {
                 "row_number": err.row_number,
                 "field": err.field,
                 "error_type": err.error_type,
-                "message": message,
-                "error_message": message,
+                "message": err.message,
             }
         )
     return serialized
 
 
-def _make_progress_callback(job: ETLJob, redis_client):
+def _make_progress_callback(job: ETLJob):
     def on_progress(processed_rows: int, progress_percentage: int, errors):
+        if is_cancel_requested(job.job_id):
+            return False
         serialized_errors = [
             {
                 "row_number": item[0],
                 "field": item[1],
                 "error_type": item[2],
                 "message": item[3],
-                "error_message": item[3],
             }
             for item in errors
         ]
@@ -87,7 +62,7 @@ def _make_progress_callback(job: ETLJob, redis_client):
             progress_percentage=progress_percentage,
             errors=serialized_errors,
         )
-        _update_job_state(redis_client, job, serialized_errors)
+        return True
 
     return on_progress
 
@@ -112,7 +87,6 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
             started_at=started_at,
             progress_percentage=5,
         )
-        _update_job_state(redis_client, job)
 
         if is_cancel_requested(job_id):
             return {"cancelled": True}
@@ -125,11 +99,14 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
             credits_url,
             payments_url,
             _database_url(),
-            _make_progress_callback(job, redis_client),
+            _make_progress_callback(job),
         )
 
         job.refresh_from_db()
         if job.status == ETLJob.STATUS_CANCELLED or is_cancel_requested(job_id):
+            return {"cancelled": True}
+
+        if getattr(result, "cancelled", False):
             return {"cancelled": True}
 
         errors = _serialize_error_logs(result.error_logs)
@@ -155,7 +132,6 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
                 f"{result.execution_duration_seconds:.2f}s"
             ),
         )
-        _update_job_state(redis_client, job, errors)
 
         if not result.success:
             raise RuntimeError(errors[0]["message"] if errors else "ETL pipeline failed")
@@ -169,16 +145,24 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
         job.refresh_from_db()
         if job.status == ETLJob.STATUS_CANCELLED or is_cancel_requested(job_id):
             return {"cancelled": True}
-        error = {"row_number": 0, "field": "pipeline", "error_type": "PIPELINE_ERROR", "message": str(exc), "error_message": str(exc)}
+        error = {
+            "row_number": 0,
+            "field": "pipeline",
+            "error_type": "PIPELINE_ERROR",
+            "message": str(exc),
+        }
         _update_job(
             job,
             status=ETLJob.STATUS_FAILED,
             completed_at=dj_timezone.now(),
             result=str(exc),
             errors=[error],
-            validation_summary={"is_valid": False, "error_count": 1, "critical_failures": [str(exc)]},
+            validation_summary={
+                "is_valid": False,
+                "error_count": 1,
+                "critical_failures": [str(exc)],
+            },
         )
-        _update_job_state(redis_client, job, [error])
         raise
     finally:
         release_sync_lock(redis_client, tenant_id, loan_type, job_id)

@@ -1,7 +1,6 @@
 mod db;
 mod parser;
 mod pipeline;
-mod profiler;
 mod stream;
 mod types;
 
@@ -57,6 +56,8 @@ struct PyPipelineResult {
     #[pyo3(get)]
     success: bool,
     #[pyo3(get)]
+    cancelled: bool,
+    #[pyo3(get)]
     job_id: String,
     #[pyo3(get)]
     processed_rows_count: u64,
@@ -72,6 +73,7 @@ impl From<PipelineResult> for PyPipelineResult {
     fn from(value: PipelineResult) -> Self {
         Self {
             success: value.success,
+            cancelled: value.cancelled,
             job_id: value.job_id,
             processed_rows_count: value.processed_rows_count,
             execution_duration_seconds: value.execution_duration_seconds,
@@ -95,16 +97,17 @@ fn execute_etl_pipeline(
     let runtime = tokio::runtime::Runtime::new()
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
-    let result = runtime.block_on(run_pipeline(
-        py,
-        job_id,
-        tenant_id,
-        loan_type,
-        bank_credits_url,
-        bank_payments_url,
-        database_url,
-        on_progress,
-    ))?;
+    let result = py.allow_threads(|| {
+        runtime.block_on(run_pipeline(
+            job_id,
+            tenant_id,
+            loan_type,
+            bank_credits_url,
+            bank_payments_url,
+            database_url,
+            on_progress,
+        ))
+    })?;
 
     Ok(result.into())
 }

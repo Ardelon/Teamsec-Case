@@ -8,4 +8,10 @@ target/
 dist/
 *.egg-info/
 .DS_Store
+.pytest_cache/
+.coverage
+htmlcov/
 external_bank/storage/
+external_bank/db.sqlite3
+**/__pycache__/
+*.pyc

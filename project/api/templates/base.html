@@ -6,7 +6,6 @@
     <title>{% block title %}TeamSec Platform{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     {% block extra_head %}{% endblock %}
 </head>
 <body class="w-full min-h-screen bg-slate-50/40 text-slate-800 antialiased font-sans">
@@ -27,31 +26,55 @@
         {% block content %}{% endblock %}
     </main>
     <script>
-        function authHeaders() {
-            const token = localStorage.getItem('jwt_token');
-            return token ? { 'Authorization': 'Bearer ' + token } : {};
+        function csrfHeaders() {
+            const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
+            if (!match) {
+                return {};
+            }
+            return { 'X-CSRFToken': decodeURIComponent(match[1]) };
         }
-        function requireAuth() {
-            if (!localStorage.getItem('jwt_token')) {
+
+        async function apiFetch(url, options = {}) {
+            const method = (options.method || 'GET').toUpperCase();
+            const headers = {
+                ...(options.headers || {}),
+            };
+            if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS' && method !== 'TRACE') {
+                Object.assign(headers, csrfHeaders());
+            }
+            return fetch(url, {
+                ...options,
+                headers,
+                credentials: 'same-origin',
+            });
+        }
+
+        async function requireAuth() {
+            const res = await apiFetch('/api/auth/session');
+            if (!res.ok) {
+                window.location.href = '/login/';
+                return null;
+            }
+            return res.json();
+        }
+
+        async function logout() {
+            try {
+                await apiFetch('/api/auth/logout', { method: 'POST' });
+            } finally {
                 window.location.href = '/login/';
             }
         }
-        function logout() {
-            localStorage.removeItem('jwt_token');
-            localStorage.removeItem('tenant_id');
-            window.location.href = '/login/';
-        }
-        function updateNavAuth() {
+
+        function updateNavAuth(session) {
             const navAuth = document.getElementById('nav-auth');
             const navTenant = document.getElementById('nav-tenant');
             const logoutBtn = document.getElementById('logout-btn');
-            const tenantId = localStorage.getItem('tenant_id');
-            const token = localStorage.getItem('jwt_token');
             if (!navAuth || !logoutBtn || !navTenant) {
                 return;
             }
-            if (token) {
-                navTenant.textContent = tenantId || '—';
+            if (session && session.tenant_id) {
+                navTenant.textContent = session.tenant_id;
                 navAuth.classList.remove('hidden');
                 navAuth.classList.add('flex');
                 logoutBtn.classList.remove('hidden');
@@ -62,15 +85,16 @@
                 logoutBtn.classList.add('hidden');
             }
         }
+
         document.addEventListener('DOMContentLoaded', () => {
-            updateNavAuth();
             const logoutBtn = document.getElementById('logout-btn');
             if (logoutBtn) {
                 logoutBtn.addEventListener('click', logout);
             }
         });
+
         document.body.addEventListener('htmx:configRequest', (event) => {
-            Object.assign(event.detail.headers, authHeaders());
+            Object.assign(event.detail.headers, csrfHeaders());
         });
     </script>
     {% block extra_scripts %}{% endblock %}

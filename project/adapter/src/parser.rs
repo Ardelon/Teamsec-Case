@@ -3,6 +3,24 @@ use chrono::NaiveDate;
 use regex::Regex;
 use rust_decimal::Decimal;
 use std::str::FromStr;
+use std::sync::OnceLock;
+
+fn date_formats() -> &'static [(Regex, &'static str)] {
+    static FORMATS: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    FORMATS.get_or_init(|| {
+        vec![
+            (Regex::new(r"^\d{8}$").expect("valid date regex"), "%Y%m%d"),
+            (
+                Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("valid date regex"),
+                "%Y-%m-%d",
+            ),
+            (
+                Regex::new(r"^\d{2}\.\d{2}\.\d{4}$").expect("valid date regex"),
+                "%d.%m.%Y",
+            ),
+        ]
+    })
+}
 
 pub fn parse_date(value: Option<&str>, field: &str, row_number: u32) -> Result<Option<String>, ErrorLog> {
     let raw = match value.map(str::trim).filter(|v| !v.is_empty()) {
@@ -10,14 +28,7 @@ pub fn parse_date(value: Option<&str>, field: &str, row_number: u32) -> Result<O
         None => return Ok(None),
     };
 
-    static FORMATS: &[(&str, &str)] = &[
-        (r"^\d{8}$", "%Y%m%d"),
-        (r"^\d{4}-\d{2}-\d{2}$", "%Y-%m-%d"),
-        (r"^\d{2}\.\d{2}\.\d{4}$", "%d.%m.%Y"),
-    ];
-
-    for (pattern, fmt) in FORMATS {
-        let re = Regex::new(pattern).expect("valid date regex");
+    for (re, fmt) in date_formats() {
         if re.is_match(raw) {
             if let Ok(parsed) = NaiveDate::parse_from_str(raw, fmt) {
                 return Ok(Some(parsed.format("%Y-%m-%d").to_string()));

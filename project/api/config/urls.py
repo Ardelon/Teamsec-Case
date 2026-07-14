@@ -9,5 +9,4 @@ urlpatterns = [
     path("", etl_views.login_page),
     path("dashboard/", etl_views.dashboard),
     path("login/", etl_views.login_page),
-    path("etl/", etl_views.dashboard),
 ]

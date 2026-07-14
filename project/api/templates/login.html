@@ -6,11 +6,11 @@
     <form id="login-form" class="space-y-4">
         <div>
             <label class="block text-sm font-medium text-slate-700">Username</label>
-            <input id="username" type="text" value="operator_admin" class="mt-1 w-full border rounded px-3 py-2" required>
+            <input id="username" type="text" class="mt-1 w-full border rounded px-3 py-2" required autocomplete="username">
         </div>
         <div>
             <label class="block text-sm font-medium text-slate-700">Password</label>
-            <input id="password" type="password" value="secure_cleartext_password" class="mt-1 w-full border rounded px-3 py-2" required>
+            <input id="password" type="password" class="mt-1 w-full border rounded px-3 py-2" required autocomplete="current-password">
         </div>
         <div>
             <label class="block text-sm font-medium text-slate-700">Tenant</label>
@@ -38,7 +38,11 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     };
     const res = await fetch('/api/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            ...csrfHeaders(),
+        },
+        credentials: 'same-origin',
         body: JSON.stringify(payload),
     });
     const data = await res.json();
@@ -47,8 +51,6 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         errorEl.classList.remove('hidden');
         return;
     }
-    localStorage.setItem('jwt_token', data.token);
-    localStorage.setItem('tenant_id', data.tenant_id);
     window.location.href = '/dashboard/';
 });
 </script>

@@ -1,5 +1,6 @@
 from django.shortcuts import render
 from django.utils import timezone
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -7,7 +8,12 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantScopedPermission
-from apps.core.services.redis_lock import acquire_sync_lock, get_active_job_id, get_redis_client
+from apps.core.services.redis_lock import (
+    acquire_sync_lock,
+    get_active_job_id,
+    get_redis_client,
+    release_sync_lock,
+)
 from apps.etl.models import ETLJob
 from apps.etl.serializers import JobStatusSerializer, SyncRequestSerializer, SyncResponseSerializer, new_job_id
 from apps.etl.services.cancel_sync import cancel_sync_job, store_celery_task_id
@@ -50,7 +56,7 @@ def _sync_status_context(job: ETLJob) -> dict:
     sync_error = None
     if job.status in {ETLJob.STATUS_FAILED, ETLJob.STATUS_CANCELLED} and job.errors:
         first_error = job.errors[0]
-        raw_message = first_error.get("message") or first_error.get("error_message") or ""
+        raw_message = first_error.get("message") or ""
         sync_error = humanize_sync_error(raw_message, job.tenant_id, job.loan_type)
     elif job.status == ETLJob.STATUS_CANCELLED:
         sync_error = humanize_sync_error("Sync cancelled by user", job.tenant_id, job.loan_type)
@@ -58,12 +64,16 @@ def _sync_status_context(job: ETLJob) -> dict:
 
 
 def _active_job(tenant_id: str, loan_type: str) -> ETLJob | None:
-    active_job_id = get_active_job_id(get_redis_client(), tenant_id, loan_type.upper())
+    redis_client = get_redis_client()
+    loan_type = loan_type.upper()
+    active_job_id = get_active_job_id(redis_client, tenant_id, loan_type)
     if not active_job_id:
         return None
     try:
         return ETLJob.objects.get(job_id=active_job_id)
     except ETLJob.DoesNotExist:
+        # Orphan lock (e.g. warehouse truncate) — drop it so sync can proceed.
+        release_sync_lock(redis_client, tenant_id, loan_type, active_job_id)
         return None
 
 
@@ -83,18 +93,25 @@ def sync_data(request: Request):
     job_id = new_job_id()
     redis_client = get_redis_client()
 
-    if not acquire_sync_lock(redis_client, tenant_id, loan_type, job_id):
+    acquired = acquire_sync_lock(redis_client, tenant_id, loan_type, job_id)
+    if not acquired:
         active_job = _active_job(tenant_id, loan_type)
-        active_job_id = active_job.job_id if active_job else get_active_job_id(redis_client, tenant_id, loan_type)
-        payload = {
-            "error": "A pipeline processing cycle is actively running for this specific tenant and credit selection selection.",
-            "active_job_id": active_job_id,
-        }
-        if active_job:
-            payload["active_job"] = JobStatusSerializer(active_job).data
-            if request.headers.get("HX-Request") == "true":
-                return render(request, "partials/sync_status.html", _sync_status_context(active_job))
-        return Response(payload, status=status.HTTP_409_CONFLICT)
+        if active_job is None:
+            acquired = acquire_sync_lock(redis_client, tenant_id, loan_type, job_id)
+        if not acquired:
+            active_job = active_job or _active_job(tenant_id, loan_type)
+            active_job_id = (
+                active_job.job_id if active_job else get_active_job_id(redis_client, tenant_id, loan_type)
+            )
+            payload = {
+                "error": "A pipeline processing cycle is actively running for this specific tenant and credit selection.",
+                "active_job_id": active_job_id,
+            }
+            if active_job:
+                payload["active_job"] = JobStatusSerializer(active_job).data
+                if request.headers.get("HX-Request") == "true":
+                    return render(request, "partials/sync_status.html", _sync_status_context(active_job))
+            return Response(payload, status=status.HTTP_409_CONFLICT)
 
     job = ETLJob.objects.create(
         job_id=job_id,
@@ -216,9 +233,11 @@ def profiling_metrics(request: Request):
     return Response(payload)
 
 
+@ensure_csrf_cookie
 def dashboard(request):
     return render(request, "dashboard.html")
 
 
+@ensure_csrf_cookie
 def login_page(request):
     return render(request, "login.html")

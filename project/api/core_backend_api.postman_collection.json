@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
     "name": "Core Backend REST API",
-    "description": "Postman collection for the TeamSec core_backend_api Django service (App 3).\n\nBase URL defaults to http://localhost:8000 (docker-compose core_backend_api).\n\nDemo credentials (seed_operators):\n- username: operator_admin\n- password: secure_cleartext_password\n- tenant_id: BANK001\n\nValid tenant_id values: BANK001, BANK002, BANK003\nValid loan_type values: RETAIL, COMMERCIAL\n\nRun \"Login\" first — the test script stores {{jwt_token}} for authenticated requests.\nRun \"Trigger Sync\" — the test script stores {{job_id}} for status polling.",
+    "description": "Postman collection for the TeamSec core_backend_api Django service (App 3).\n\nBase URL defaults to http://localhost:8000 (docker-compose core_backend_api).\n\nDemo credentials (seed_operators):\n- username: operator_admin\n- password: secure_cleartext_password\n- tenant_id: BANK001\n\nValid tenant_id values: BANK001, BANK002, BANK003\nValid loan_type values: RETAIL, COMMERCIAL\n\nBrowser UI uses HttpOnly Django session cookies (not localStorage).\nRun \"Login\" first — session cookie is set; the test script also stores {{jwt_token}} for Bearer auth if preferred.\nRun \"Trigger Sync\" — the test script stores {{job_id}} for status polling.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -122,7 +122,7 @@
               "host": ["{{base_url}}"],
               "path": ["api", "auth", "login"]
             },
-            "description": "Validates operator credentials and returns a scoped JWT.\n\nTenant is encoded in the token — subsequent requests derive tenant_id from the Bearer token, not from request parameters."
+            "description": "Validates operator credentials, creates an HttpOnly session cookie, and returns scoped claims.\n\nAlso returns an optional Bearer token for API tooling. The UI never stores the token in localStorage — it relies on the session cookie.\nTenant for subsequent UI requests comes from the session."
           },
           "response": [
             {

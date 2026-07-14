@@ -17,20 +17,47 @@ All services communicate over the internal `teamsec_network` Docker bridge.
 ## Quick Start
 
 ```bash
-# From the repository root (parent of project/)
-bash init_project.sh
-
 cd project
 docker compose up --build
 ```
 
+- Login UI: http://localhost:8000/login/
+- Dashboard: http://localhost:8000/dashboard/
+- Bank portal: http://localhost:8080/portal/
+
+### Demo operators (seeded on API startup — demo only)
+
+| Username         | Password                   | Tenant  |
+|------------------|----------------------------|---------|
+| operator_admin   | secure_cleartext_password  | BANK001 |
+| operator_bank2   | secure_cleartext_password  | BANK002 |
+| operator_bank3   | secure_cleartext_password  | BANK003 |
+
+Valid `loan_type` values: `RETAIL`, `COMMERCIAL`.
+
 ## Endpoints
 
-- Gateway health: `GET http://localhost:8000/api/health/`
-- Issue JWT: `POST http://localhost:8000/api/auth/token/` with `{"tenant_id": "tenant_alpha"}`
-- ETL dashboard (HTMX): `http://localhost:8000/etl/`
-- Trigger ETL job: `POST http://localhost:8000/etl/jobs/trigger/`
-- Bank simulator: `GET http://localhost:8080/api/v1/loans/tenant_alpha/`
+### Gateway (`:8000`)
+
+- Health: `GET /api/health/`
+- Login (session cookie): `POST /api/auth/login` with `{"username", "password", "tenant_id"}` — sets HttpOnly session cookie; optional Bearer `token` in body for API tooling
+- Session: `GET /api/auth/session`
+- Logout: `POST /api/auth/logout`
+- Trigger sync: `POST /api/sync` with `{"loan_type": "RETAIL"|"COMMERCIAL"}` (session cookie or Bearer JWT)
+- Active sync: `GET /api/sync/active?loan_type=RETAIL`
+- Job status: `GET /api/sync/status/<job_id>`
+- Cancel sync: `POST /api/sync/cancel/<job_id>`
+- Data snapshot: `GET /api/data?loan_type=RETAIL`
+- Profiling: `GET /api/profiling?loan_type=RETAIL`
+
+### Bank simulator (`:8080`)
+
+- Health: `GET /health/`
+- Upload CSV portfolio: `POST /api/bank/upload`
+- Export credits (JSON stream): `GET /api/bank/export/credits?tenant_id=BANK001&loan_type=RETAIL`
+- Export payments (JSON stream): `GET /api/bank/export/payments?tenant_id=BANK001&loan_type=RETAIL`
+
+Bank APIs are intentionally unauthenticated for local simulation.
 
 ## Environment Variables
 
@@ -40,18 +67,37 @@ docker compose up --build
 | POSTGRES_PASSWORD   | teamsec_secret     | Warehouse DB password      |
 | POSTGRES_DB         | teamsec_warehouse  | Warehouse database name    |
 | CELERY_BROKER_URL   | redis://redis_broker:6379/0 | Task queue URL |
-| EXTERNAL_BANK_URL   | http://external_bank_sim:8080 | Bank sim base URL |
+| EXTERNAL_BANK_URL   | http://externalbank:8080 | Bank sim base URL (Compose alias) |
+
+Default Django/JWT secret keys in Compose are demo-only — do not use outside local development.
+
+## Known limitations
+
+- Demo secrets, `DEBUG`, and open bank simulator are for local demos only.
+- Bank export/upload APIs are intentionally unauthenticated.
+- Sync cancel is cooperative: the progress callback polls a Redis cancel flag and Rust aborts before commit. Celery `revoke` + SIGTERM remains a fallback for stuck workers.
+- API tests expect reachable Redis and Postgres (as configured in settings).
+- The API image builds the Rust adapter for a shared Dockerfile layout; only the worker needs `adapter_core` at runtime.
+- Warehouse snapshot money fields are serialized as decimal strings (not floats). Profiling aggregates remain IEEE floats for charting.
 
 ## Development
 
 ```bash
-# Rebuild only the worker after Rust changes
+# Rebuild / refresh only the worker after Rust changes
 docker compose build background_worker
-docker compose up -d background_worker
+docker compose up -d --force-recreate --no-deps background_worker
 
-# Run Rust adapter unit test locally (requires maturin + built wheel)
-cd adapter && maturin develop && cd ..
-pytest tests/test_rust_adapter.py -v
+# Rust unit tests (stream/parser/pipeline); needs local Rust toolchain or CI
+cd adapter && cargo test --lib && cd ..
+
+# API orchestration tests (needs Redis + Postgres)
+cd api && python manage.py test tests -v 2 && cd ..
+
+# Bank simulator tests (from project root)
+cd external_bank && python -m pytest ../tests/test_external_bank.py -v && cd ..
+
+# Optional smoke (adapter_core installed):
+# pytest tests/test_rust_adapter.py -v
 ```
 
 See [Architecture.md](./Architecture.md) for the full system design map.
