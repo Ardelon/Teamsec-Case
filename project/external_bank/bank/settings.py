@@ -10,6 +10,7 @@ ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
+    "django.contrib.staticfiles",
     "rest_framework",
     "bank",
 ]
@@ -21,6 +22,21 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "bank.urls"
 WSGI_APPLICATION = "bank.wsgi.application"
+
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+            ],
+        },
+    }
+]
+
+STATIC_URL = "static/"
 
 DATABASES = {
     "default": {

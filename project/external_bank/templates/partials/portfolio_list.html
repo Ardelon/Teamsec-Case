@@ -1,0 +1,76 @@
+{% if portfolios %}
+{% for item in portfolios %}
+<div class="bg-white border border-slate-100 rounded-2xl p-5 shadow-sm mb-4 last:mb-0 hover:border-slate-200 hover:shadow-md/5 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
+    <div class="flex flex-col gap-2.5 flex-1 min-w-0">
+        <div class="flex items-center flex-wrap gap-2">
+            <span class="text-base font-extrabold text-slate-900 tracking-tight">{{ item.tenant_id }}</span>
+            {% if item.loan_type == "RETAIL" %}
+            <span class="bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">RETAIL</span>
+            {% elif item.loan_type == "COMMERCIAL" %}
+            <span class="bg-indigo-50 text-indigo-700 border border-indigo-100 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">COMMERCIAL</span>
+            {% else %}
+            <span class="bg-slate-50 text-slate-600 border border-slate-100 text-[10px] font-black px-2 py-0.5 rounded-md uppercase tracking-wider">{{ item.loan_type }}</span>
+            {% endif %}
+        </div>
+        <div class="flex items-center gap-4 text-[11px] font-mono tabular-nums text-slate-500 mt-0.5">
+            <span>
+                <strong>CREDITS:</strong>
+                <span class="text-slate-700 font-bold">{% if item.has_credits %}{{ item.credits_size_bytes }} bytes{% else %}missing{% endif %}</span>
+            </span>
+            <span>
+                <strong>PAYMENTS:</strong>
+                <span class="text-slate-700 font-bold">{% if item.has_payments %}{{ item.payments_size_bytes }} bytes{% else %}missing{% endif %}</span>
+            </span>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-2 w-full md:w-auto md:min-w-[280px] flex-shrink-0">
+        {% if item.has_credits %}
+        <a class="inline-flex items-center justify-center gap-1.5 bg-slate-50/60 hover:bg-blue-600 border border-slate-200/80 hover:border-blue-600 text-slate-600 hover:text-white text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer select-none text-center shadow-sm"
+           href="/api/bank/download/credits?tenant_id={{ item.tenant_id }}&loan_type={{ item.loan_type }}&format=csv">
+            <span class="font-mono text-[10px] opacity-70" aria-hidden="true">▤</span>
+            Credits CSV
+        </a>
+        <a class="inline-flex items-center justify-center gap-1.5 bg-slate-50/60 hover:bg-blue-600 border border-slate-200/80 hover:border-blue-600 text-slate-600 hover:text-white text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer select-none text-center shadow-sm"
+           href="/api/bank/download/credits?tenant_id={{ item.tenant_id }}&loan_type={{ item.loan_type }}&format=json">
+            <span class="font-mono text-[10px] opacity-70" aria-hidden="true">{ }</span>
+            Credits JSON
+        </a>
+        {% else %}
+        <span class="inline-flex items-center justify-center gap-1.5 bg-slate-50/40 border border-slate-100 text-slate-300 text-xs font-bold py-2 px-3 rounded-xl select-none text-center">
+            <span class="font-mono text-[10px]" aria-hidden="true">▤</span>
+            Credits CSV
+        </span>
+        <span class="inline-flex items-center justify-center gap-1.5 bg-slate-50/40 border border-slate-100 text-slate-300 text-xs font-bold py-2 px-3 rounded-xl select-none text-center">
+            <span class="font-mono text-[10px]" aria-hidden="true">{ }</span>
+            Credits JSON
+        </span>
+        {% endif %}
+
+        {% if item.has_payments %}
+        <a class="inline-flex items-center justify-center gap-1.5 bg-slate-50/60 hover:bg-blue-600 border border-slate-200/80 hover:border-blue-600 text-slate-600 hover:text-white text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer select-none text-center shadow-sm"
+           href="/api/bank/download/payments?tenant_id={{ item.tenant_id }}&loan_type={{ item.loan_type }}&format=csv">
+            <span class="font-mono text-[10px] opacity-70" aria-hidden="true">▤</span>
+            Payments CSV
+        </a>
+        <a class="inline-flex items-center justify-center gap-1.5 bg-slate-50/60 hover:bg-blue-600 border border-slate-200/80 hover:border-blue-600 text-slate-600 hover:text-white text-xs font-bold py-2 px-3 rounded-xl transition-all cursor-pointer select-none text-center shadow-sm"
+           href="/api/bank/download/payments?tenant_id={{ item.tenant_id }}&loan_type={{ item.loan_type }}&format=json">
+            <span class="font-mono text-[10px] opacity-70" aria-hidden="true">{ }</span>
+            Payments JSON
+        </a>
+        {% else %}
+        <span class="inline-flex items-center justify-center gap-1.5 bg-slate-50/40 border border-slate-100 text-slate-300 text-xs font-bold py-2 px-3 rounded-xl select-none text-center">
+            <span class="font-mono text-[10px]" aria-hidden="true">▤</span>
+            Payments CSV
+        </span>
+        <span class="inline-flex items-center justify-center gap-1.5 bg-slate-50/40 border border-slate-100 text-slate-300 text-xs font-bold py-2 px-3 rounded-xl select-none text-center">
+            <span class="font-mono text-[10px]" aria-hidden="true">{ }</span>
+            Payments JSON
+        </span>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+{% else %}
+<p class="text-sm text-slate-500">No portfolios stored yet.</p>
+{% endif %}

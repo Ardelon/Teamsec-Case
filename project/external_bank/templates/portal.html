@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Bank Portal - Upload & Download{% endblock %}
+{% block content %}
+<div class="w-full max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start bg-slate-50/50 min-h-screen">
+    <div class="lg:col-span-5 bg-white border border-slate-100 rounded-2xl p-6 shadow-sm">
+        <h2 class="text-lg font-bold text-slate-900">Upload CSV Data</h2>
+        <span class="text-xs font-medium text-slate-400 mt-0.5 mb-6 block">Upload both credit and payment plan files for a tenant portfolio.</span>
+
+        <form id="upload-form">
+            <div class="mb-4">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block" for="tenant_id">Tenant</label>
+                <select id="tenant_id" name="tenant_id" required
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 outline-none focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 transition-all">
+                    {% for tenant in tenants %}
+                    <option value="{{ tenant }}">{{ tenant }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-4">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block" for="loan_type">Loan type</label>
+                <select id="loan_type" name="loan_type" required
+                        class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 outline-none focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/10 transition-all">
+                    {% for loan in loan_types %}
+                    <option value="{{ loan }}">{{ loan }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="mb-4">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block" for="credit_file">Credits CSV</label>
+                <label for="credit_file"
+                       class="w-full bg-slate-50/50 border border-dashed border-slate-200 rounded-xl p-3 flex items-center gap-3 text-xs text-slate-500 hover:bg-slate-50 transition-all cursor-pointer">
+                    <span class="shrink-0 w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+                            <path d="M3 3.5A1.5 1.5 0 0 1 4.5 2h5.879a1.5 1.5 0 0 1 1.06.44l4.122 4.12A1.5 1.5 0 0 1 16 7.622V16.5a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 3 16.5v-13Z" />
+                            <path d="M9.5 2.5v3.879a1.5 1.5 0 0 0 1.5 1.5H14.5" fill="none" stroke="currentColor" stroke-width="1.2" />
+                        </svg>
+                    </span>
+                    <span id="credit_file_label" class="truncate">Choose credits CSV file…</span>
+                    <input id="credit_file" name="credit_file" type="file" accept=".csv,text/csv" required class="sr-only">
+                </label>
+            </div>
+            <div class="mb-4">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block" for="payment_plan_file">Payments CSV</label>
+                <label for="payment_plan_file"
+                       class="w-full bg-slate-50/50 border border-dashed border-slate-200 rounded-xl p-3 flex items-center gap-3 text-xs text-slate-500 hover:bg-slate-50 transition-all cursor-pointer">
+                    <span class="shrink-0 w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4">
+                            <path fill-rule="evenodd" d="M2.5 4A1.5 1.5 0 0 1 4 2.5h3.5a.75.75 0 0 1 0 1.5H4a.25.25 0 0 0-.25.25v11.5c0 .138.112.25.25.25h12a.25.25 0 0 0 .25-.25V10.5a.75.75 0 0 1 1.5 0v5A1.75 1.75 0 0 1 16 17.25H4A1.75 1.75 0 0 1 2.25 15.5V4Z" clip-rule="evenodd" />
+                            <path d="M14.25 2.25a.75.75 0 0 0 0 1.5h1.69l-5.22 5.22a.75.75 0 1 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0V3a.75.75 0 0 0-.75-.75h-3.5Z" />
+                        </svg>
+                    </span>
+                    <span id="payment_file_label" class="truncate">Choose payments CSV file…</span>
+                    <input id="payment_plan_file" name="payment_plan_file" type="file" accept=".csv,text/csv" required class="sr-only">
+                </label>
+            </div>
+            <button id="upload-btn" type="submit"
+                    class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-xl transition-all shadow-sm shadow-emerald-600/10 text-sm tracking-wide mt-2 disabled:opacity-50">
+                Upload Portfolio
+            </button>
+        </form>
+        <div id="upload-result" class="mt-4 text-sm"></div>
+    </div>
+
+    <div class="lg:col-span-7 bg-white border border-slate-100 rounded-2xl p-6 shadow-sm">
+        <div class="flex items-center justify-between border-b border-slate-50 pb-4 mb-4">
+            <div>
+                <h2 class="text-lg font-bold text-slate-900">Stored Portfolios</h2>
+                <span class="text-xs font-medium text-slate-400 mt-0.5 block">Download original CSV files from storage.</span>
+            </div>
+            <button id="refresh-portfolios" type="button"
+                    class="text-xs font-bold text-slate-400 hover:text-slate-600 border border-slate-200 rounded-lg px-2.5 py-1.5 transition-all bg-white shadow-sm">
+                Refresh
+            </button>
+        </div>
+        <div id="portfolio-list">
+            {% include "partials/portfolio_list.html" %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function formatBytes(bytes) {
+    if (!bytes) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let idx = 0;
+    while (value >= 1024 && idx < units.length - 1) {
+        value /= 1024;
+        idx += 1;
+    }
+    return value.toFixed(idx === 0 ? 0 : 1) + ' ' + units[idx];
+}
+
+function bindFileLabel(inputId, labelId, fallback) {
+    const input = document.getElementById(inputId);
+    const label = document.getElementById(labelId);
+    input.addEventListener('change', () => {
+        label.textContent = input.files?.[0]?.name || fallback;
+    });
+}
+
+bindFileLabel('credit_file', 'credit_file_label', 'Choose credits CSV file…');
+bindFileLabel('payment_plan_file', 'payment_file_label', 'Choose payments CSV file…');
+
+function showResult(type, title, message) {
+    const styles = {
+        success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+        error: 'border-red-200 bg-red-50 text-red-800',
+    };
+    document.getElementById('upload-result').innerHTML = `
+        <div class="border rounded-xl p-3 ${styles[type] || styles.error}">
+            <p class="font-semibold">${title}</p>
+            <p class="mt-1">${message}</p>
+        </div>
+    `;
+}
+
+async function refreshPortfolios() {
+    const res = await fetch('/portal/portfolios');
+    if (!res.ok) return;
+    document.getElementById('portfolio-list').innerHTML = await res.text();
+}
+
+document.getElementById('refresh-portfolios').addEventListener('click', refreshPortfolios);
+
+document.getElementById('upload-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const btn = document.getElementById('upload-btn');
+    const form = event.target;
+    const data = new FormData(form);
+
+    btn.disabled = true;
+    btn.textContent = 'Uploading...';
+    document.getElementById('upload-result').innerHTML = '';
+
+    try {
+        const res = await fetch('/api/bank/upload', {
+            method: 'POST',
+            body: data,
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const detail = payload.detail
+                || payload.tenant_id?.[0]
+                || payload.loan_type?.[0]
+                || payload.credit_file?.[0]
+                || payload.payment_plan_file?.[0]
+                || 'Upload failed.';
+            showResult('error', 'Upload failed', detail);
+            return;
+        }
+
+        const credits = payload.uploaded_files?.find((f) => f.type === 'credit_data');
+        const payments = payload.uploaded_files?.find((f) => f.type === 'payment_plan_data');
+        showResult(
+            'success',
+            'Upload successful',
+            `${payload.tenant_id} / ${payload.loan_type} · credits ${formatBytes(credits?.size_bytes || 0)}, payments ${formatBytes(payments?.size_bytes || 0)}`
+        );
+        form.reset();
+        document.getElementById('credit_file_label').textContent = 'Choose credits CSV file…';
+        document.getElementById('payment_file_label').textContent = 'Choose payments CSV file…';
+        await refreshPortfolios();
+    } catch (error) {
+        showResult('error', 'Upload failed', error.message || 'Network error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Upload Portfolio';
+    }
+});
+</script>
+{% endblock %}

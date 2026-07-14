@@ -6,7 +6,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from apps.core.models import OperatorProfile
-from apps.core.services.redis_lock import acquire_sync_lock, get_redis_client, release_sync_lock
+from apps.core.services.redis_lock import acquire_sync_lock, get_active_job_id, get_redis_client, release_sync_lock
 from apps.etl.models import ETLJob
 from apps.etl.tasks import run_etl_pipeline
 
@@ -70,6 +70,7 @@ class CoreAPITestCase(TestCase):
 
     @patch("apps.etl.views.run_etl_pipeline.delay")
     def test_sync_queues_job(self, mock_delay):
+        mock_delay.return_value = SimpleNamespace(id="celery-task-1")
         response = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json", **self.auth)
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.data["status"], "QUEUED")
@@ -79,6 +80,7 @@ class CoreAPITestCase(TestCase):
 
     @patch("apps.etl.views.run_etl_pipeline.delay")
     def test_sync_lock_conflict(self, mock_delay):
+        mock_delay.return_value = SimpleNamespace(id="celery-task-1")
         redis_client = get_redis_client()
         acquire_sync_lock(redis_client, "BANK001", "RETAIL", "job_existing")
         response = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json", **self.auth)
@@ -88,6 +90,7 @@ class CoreAPITestCase(TestCase):
 
     @patch("apps.etl.views.run_etl_pipeline.delay")
     def test_sync_conflict_returns_active_job(self, mock_delay):
+        mock_delay.return_value = SimpleNamespace(id="celery-task-1")
         redis_client = get_redis_client()
         job = ETLJob.objects.create(
             job_id="job_existing",
@@ -131,6 +134,7 @@ class CoreAPITestCase(TestCase):
 
     @patch("apps.etl.views.run_etl_pipeline.delay")
     def test_sync_retail_and_commercial_in_parallel(self, mock_delay):
+        mock_delay.return_value = SimpleNamespace(id="celery-task-1")
         retail = self.client.post("/api/sync", {"loan_type": "RETAIL"}, format="json", **self.auth)
         commercial = self.client.post("/api/sync", {"loan_type": "COMMERCIAL"}, format="json", **self.auth)
         self.assertEqual(retail.status_code, 202)
@@ -139,6 +143,35 @@ class CoreAPITestCase(TestCase):
         self.assertEqual(mock_delay.call_count, 2)
         release_sync_lock(get_redis_client(), "BANK001", "RETAIL", retail.data["job_id"])
         release_sync_lock(get_redis_client(), "BANK001", "COMMERCIAL", commercial.data["job_id"])
+
+    def test_cancel_sync_job(self):
+        redis_client = get_redis_client()
+        job = ETLJob.objects.create(
+            job_id="job_to_cancel",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_PROCESSING,
+            progress_percentage=20,
+        )
+        acquire_sync_lock(redis_client, "BANK001", "RETAIL", job.job_id)
+        with patch("apps.etl.services.cancel_sync.AsyncResult") as mock_result:
+            mock_result.return_value.revoke = lambda *args, **kwargs: None
+            response = self.client.post(f"/api/sync/cancel/{job.job_id}", **self.auth)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "CANCELLED")
+        job.refresh_from_db()
+        self.assertEqual(job.status, ETLJob.STATUS_CANCELLED)
+        self.assertIsNone(get_active_job_id(redis_client, "BANK001", "RETAIL"))
+
+    def test_cancel_completed_job_rejected(self):
+        job = ETLJob.objects.create(
+            job_id="job_done",
+            tenant_id="BANK001",
+            loan_type="RETAIL",
+            status=ETLJob.STATUS_COMPLETED,
+        )
+        response = self.client.post(f"/api/sync/cancel/{job.job_id}", **self.auth)
+        self.assertEqual(response.status_code, 400)
 
     def test_tenant_mismatch_forbidden(self):
         response = self.client.get("/api/data?loan_type=RETAIL&tenant_id=BANK002", **self.auth)

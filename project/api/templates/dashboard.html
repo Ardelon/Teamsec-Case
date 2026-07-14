@@ -1,99 +1,190 @@
 {% extends "base.html" %}
 {% block title %}Dashboard - TeamSec{% endblock %}
+{% block extra_head %}
+<style>
+@keyframes shimmer-stripes {
+    0% { background-position: 0 0; }
+    100% { background-position: 40px 0; }
+}
+.progress-bar-striped {
+    background-image: linear-gradient(
+        45deg,
+        rgba(148, 163, 184, 0.35) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(148, 163, 184, 0.35) 50%,
+        rgba(148, 163, 184, 0.35) 75%,
+        transparent 75%,
+        transparent
+    );
+    background-size: 20px 20px;
+}
+.animate-shimmer {
+    animation: shimmer-stripes 0.8s linear infinite;
+}
+</style>
+{% endblock %}
 {% block content %}
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-    <div class="bg-white rounded-lg shadow p-6">
-        <h2 class="text-lg font-semibold mb-4">Pipeline Control Console</h2>
-        <p class="text-sm text-slate-500 mb-4">RETAIL and COMMERCIAL syncs run independently.</p>
-        <div class="space-y-4">
-            <div class="border rounded-lg p-4">
-                <div class="flex items-center justify-between gap-4">
-                    <div>
-                        <p class="font-medium">RETAIL</p>
-                        <p class="text-xs text-slate-500">Sync retail portfolio data</p>
+<div class="w-full bg-white border-b border-slate-200/60 px-6 py-1 flex gap-4" role="tablist">
+    <button type="button" data-tab="pipeline"
+            class="dash-tab flex items-center gap-2 px-4 py-3 font-bold text-xs tracking-wide uppercase border-b-2 transition-all text-slate-900 border-blue-600">
+        <span aria-hidden="true">🔄</span>
+        <span>Pipeline &amp; Overview</span>
+    </button>
+    <button type="button" data-tab="telemetry"
+            class="dash-tab flex items-center gap-2 px-4 py-3 font-bold text-xs tracking-wide uppercase border-b-2 transition-all text-slate-400 border-transparent hover:text-slate-600">
+        <span aria-hidden="true">📊</span>
+        <span>Telemetry Data</span>
+    </button>
+    <button type="button" data-tab="ledger"
+            class="dash-tab flex items-center gap-2 px-4 py-3 font-bold text-xs tracking-wide uppercase border-b-2 transition-all text-slate-400 border-transparent hover:text-slate-600">
+        <span aria-hidden="true">📋</span>
+        <span>Credit Snapshot Ledger</span>
+    </button>
+</div>
+
+<div id="tab-pipeline" class="tab-panel">
+    <div class="p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        <div class="lg:col-span-5 bg-white border border-slate-100 rounded-2xl p-6 shadow-sm flex flex-col gap-4">
+            <div>
+                <h2 class="text-sm font-black text-slate-900 tracking-tight">Pipeline Sync Engine</h2>
+                <p class="text-xs text-slate-400 mt-0.5">RETAIL and COMMERCIAL syncs run independently.</p>
+            </div>
+            <div id="status-display-RETAIL">
+                <div class="bg-white border border-slate-100 rounded-xl p-5 mb-4 shadow-sm flex flex-col gap-3 relative">
+                    <div class="flex items-center justify-between w-full gap-3">
+                        <div class="flex items-center min-w-0">
+                            <span class="text-sm font-extrabold text-slate-900">RETAIL</span>
+                        </div>
+                        <button id="sync-btn-RETAIL" data-loan-type="RETAIL" type="button"
+                                class="sync-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-sm disabled:opacity-50">
+                            Sync RETAIL
+                        </button>
                     </div>
-                    <button id="sync-btn-RETAIL" data-loan-type="RETAIL"
-                            class="sync-btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
-                        Sync RETAIL
-                    </button>
+                    <p class="text-xs text-slate-400">Sync retail portfolio data</p>
                 </div>
-                <div id="status-display-RETAIL" class="mt-3"></div>
             </div>
-            <div class="border rounded-lg p-4">
-                <div class="flex items-center justify-between gap-4">
-                    <div>
-                        <p class="font-medium">COMMERCIAL</p>
-                        <p class="text-xs text-slate-500">Sync commercial portfolio data</p>
+            <div id="status-display-COMMERCIAL">
+                <div class="bg-white border border-slate-100 rounded-xl p-5 mb-4 shadow-sm flex flex-col gap-3 relative">
+                    <div class="flex items-center justify-between w-full gap-3">
+                        <div class="flex items-center min-w-0">
+                            <span class="text-sm font-extrabold text-slate-900">COMMERCIAL</span>
+                        </div>
+                        <button id="sync-btn-COMMERCIAL" data-loan-type="COMMERCIAL" type="button"
+                                class="sync-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-sm disabled:opacity-50">
+                            Sync COMMERCIAL
+                        </button>
                     </div>
-                    <button id="sync-btn-COMMERCIAL" data-loan-type="COMMERCIAL"
-                            class="sync-btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50">
-                        Sync COMMERCIAL
-                    </button>
+                    <p class="text-xs text-slate-400">Sync commercial portfolio data</p>
                 </div>
-                <div id="status-display-COMMERCIAL" class="mt-3"></div>
             </div>
-        </div>
-    </div>
-    <div class="bg-white rounded-lg shadow p-6">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <h2 class="text-lg font-semibold">Analytical Dashboard</h2>
-            <button id="refresh-charts" class="text-sm text-blue-600 hover:text-blue-800">Refresh Stats</button>
-        </div>
-        <div class="mb-4">
-            <label class="block text-sm font-medium">View loan type</label>
-            <select id="loan" class="mt-1 w-full border rounded px-3 py-2">
-                <option value="RETAIL">RETAIL</option>
-                <option value="COMMERCIAL">COMMERCIAL</option>
-            </select>
         </div>
 
-        <div id="profiling-kpis" class="grid grid-cols-2 gap-3 mb-4"></div>
-
-        <div class="grid grid-cols-1 gap-4 mb-6">
-            <canvas id="statusChart" height="120"></canvas>
-            <canvas id="amountChart" height="120"></canvas>
-            <canvas id="nullChart" height="140"></canvas>
+        <div class="lg:col-span-7 bg-white border border-slate-100 rounded-2xl p-6 shadow-sm">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-sm font-black text-slate-900 tracking-tight">Core Overview</h2>
+                    <p class="text-xs text-slate-400 mt-0.5">Summary metrics for the selected loan type.</p>
+                </div>
+                <button id="refresh-charts" type="button"
+                        class="text-xs font-bold text-slate-400 hover:text-slate-600 border border-slate-200 rounded-lg px-2.5 py-1.5 transition-all bg-white shadow-sm">
+                    Refresh Stats
+                </button>
+            </div>
+            <div class="mt-4">
+                <label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block" for="loan">Loan type</label>
+                <select id="loan"
+                        class="w-full max-w-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all">
+                    <option value="RETAIL">RETAIL</option>
+                    <option value="COMMERCIAL">COMMERCIAL</option>
+                </select>
+            </div>
+            <div id="profiling-kpis" class="grid grid-cols-2 gap-4 mt-2"></div>
+            <p id="profiling-summary" class="mt-4 text-xs text-slate-400"></p>
         </div>
 
-        <div class="space-y-6">
-            <div>
-                <h3 class="text-sm font-semibold text-slate-700 mb-2">Numeric Fields (Credits)</h3>
-                <div id="numeric-stats" class="overflow-x-auto text-sm"></div>
-            </div>
-            <div>
-                <h3 class="text-sm font-semibold text-slate-700 mb-2">Categorical Fields (Credits)</h3>
-                <div id="categorical-stats" class="overflow-x-auto text-sm"></div>
-            </div>
-            <div>
-                <h3 class="text-sm font-semibold text-slate-700 mb-2">Null / Missing Ratio (Credits)</h3>
-                <div id="null-stats" class="overflow-x-auto text-sm"></div>
-            </div>
-            <div>
-                <h3 class="text-sm font-semibold text-slate-700 mb-2">Payment Installments</h3>
-                <div id="payment-stats" class="overflow-x-auto text-sm"></div>
-            </div>
+        <div class="w-full lg:col-span-12 bg-white border border-slate-100 rounded-2xl p-6 shadow-sm mt-2">
+            <h2 class="text-sm font-black text-slate-900 tracking-tight">Top Missing Fields</h2>
+            <p class="text-xs text-slate-400 mt-0.5 mb-4">Null-ratio distribution across credit columns.</p>
+            <div id="null-progress" class="flex flex-col gap-3"></div>
         </div>
-        <div id="profiling-summary" class="mt-4 text-xs text-slate-500"></div>
     </div>
 </div>
-<div class="mt-6 bg-white rounded-lg shadow p-6">
-    <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h2 class="text-lg font-semibold">Credit Snapshot</h2>
-        <p id="data-summary" class="text-sm text-slate-500"></p>
+
+<div id="tab-telemetry" class="tab-panel hidden">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 p-6">
+        <div class="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm flex flex-col gap-4">
+            <div>
+                <h2 class="text-sm font-black text-slate-900 tracking-tight">Numeric Fields (Credits)</h2>
+                <p class="text-xs text-slate-400 mt-0.5">Min / max / avg / stddev telemetry.</p>
+            </div>
+            <div id="numeric-stats" class="overflow-x-auto"></div>
+            <div>
+                <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Categorical Fields</h3>
+                <div id="categorical-stats" class="overflow-x-auto"></div>
+            </div>
+        </div>
+        <div class="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm flex flex-col gap-4">
+            <div>
+                <h2 class="text-sm font-black text-slate-900 tracking-tight">Payment Installments</h2>
+                <p class="text-xs text-slate-400 mt-0.5">Installment-level numeric and categorical stats.</p>
+            </div>
+            <div id="payment-stats" class="overflow-x-auto"></div>
+            <div>
+                <h3 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Null / Missing Ratio</h3>
+                <div id="null-stats" class="overflow-x-auto"></div>
+            </div>
+        </div>
     </div>
-    <div id="data-table" class="overflow-x-auto text-sm"></div>
-    <div id="data-pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3"></div>
+</div>
+
+<div id="tab-ledger" class="tab-panel hidden">
+    <div class="p-6 w-full">
+        <div class="bg-white border border-slate-100 rounded-2xl p-6 shadow-sm flex flex-col">
+            <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100 mb-4">
+                <div class="flex flex-wrap items-center gap-3 flex-1 min-w-0">
+                    <input id="ledger-search" type="search"
+                           placeholder="Hesap veya Müşteri Ara..."
+                           class="w-full max-w-sm bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 outline-none focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/10 transition-all">
+                    <p id="data-summary" class="text-xs text-slate-400"></p>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    <button id="export-csv" type="button"
+                            class="inline-flex items-center gap-1.5 bg-slate-50/60 hover:bg-blue-600 border border-slate-200/80 hover:border-blue-600 text-slate-600 hover:text-white text-xs font-bold py-2 px-3 rounded-xl transition-all shadow-sm">
+                        <span class="font-mono text-[10px] opacity-70" aria-hidden="true">▤</span>
+                        Export CSV
+                    </button>
+                    <button id="refresh-ledger" type="button"
+                            class="text-xs font-bold text-slate-400 hover:text-slate-600 border border-slate-200 rounded-lg px-2.5 py-1.5 transition-all bg-white shadow-sm">
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div id="data-table" class="w-full overflow-x-auto max-h-[600px] overflow-y-auto border border-slate-100 rounded-xl"></div>
+            <div id="data-pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3"></div>
+        </div>
+    </div>
 </div>
 {% endblock %}
+
 {% block extra_scripts %}
 <script>
 requireAuth();
 
 const LOAN_TYPES = ['RETAIL', 'COMMERCIAL'];
 const CREDIT_PAGE_SIZE = 50;
-let statusChart, amountChart, nullChart;
 let creditPage = 1;
+let lastCredits = [];
 const activeSyncs = new Set();
+
+const TAB_ACTIVE = 'text-slate-900 border-blue-600';
+const TAB_INACTIVE = 'text-slate-400 border-transparent hover:text-slate-600';
+const TAB_BASE = 'dash-tab flex items-center gap-2 px-4 py-3 font-bold text-xs tracking-wide uppercase border-b-2 transition-all';
+
+const SYNC_BLURBS = {
+    RETAIL: 'Sync retail portfolio data',
+    COMMERCIAL: 'Sync commercial portfolio data',
+};
 
 const FIELD_LABELS = {
     days_past_due: 'Days Past Due',
@@ -129,8 +220,32 @@ const FIELD_LABELS = {
     scheduled_payment_date: 'Scheduled Payment Date',
 };
 
+const CREDIT_HEADERS = [
+    ['loan_account_number', 'Account'],
+    ['customer_id', 'Customer'],
+    ['customer_type', 'Type'],
+    ['loan_status_code', 'Status'],
+    ['days_past_due', 'DPD'],
+    ['original_loan_amount', 'Original Amount'],
+    ['outstanding_principal_balance', 'Outstanding'],
+    ['nominal_interest_rate', 'Rate'],
+    ['final_maturity_date', 'Maturity'],
+    ['loan_start_date', 'Start Date'],
+    ['total_installment_count', 'Installments'],
+    ['internal_rating', 'Int. Rating'],
+    ['external_rating', 'Ext. Rating'],
+];
+
 function fieldLabel(field) {
     return FIELD_LABELS[field] || field;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 function formatNumber(value) {
@@ -146,12 +261,20 @@ function formatNumber(value) {
 
 function formatPercent(ratio, percent) {
     if (percent !== undefined && percent !== null) {
-        return Number(percent).toFixed(2) + '%';
+        return Number(percent).toFixed(1) + '%';
     }
     if (ratio === undefined || ratio === null) {
         return '—';
     }
-    return (Number(ratio) * 100).toFixed(2) + '%';
+    return (Number(ratio) * 100).toFixed(1) + '%';
+}
+
+function thClass() {
+    return 'text-[10px] font-bold text-slate-400 tracking-wider uppercase bg-slate-50 p-2.5 first:rounded-l-lg last:rounded-r-lg';
+}
+
+function tdClass() {
+    return 'p-2.5 border-b border-slate-100 text-xs font-medium text-slate-700 font-mono tabular-nums';
 }
 
 function syncButton(loanType) {
@@ -162,18 +285,62 @@ function statusDisplay(loanType) {
     return document.getElementById('status-display-' + loanType);
 }
 
+function setActiveTab(tabId) {
+    document.querySelectorAll('.dash-tab').forEach((btn) => {
+        const active = btn.dataset.tab === tabId;
+        btn.className = TAB_BASE + ' ' + (active ? TAB_ACTIVE : TAB_INACTIVE);
+    });
+    document.querySelectorAll('.tab-panel').forEach((panel) => {
+        panel.classList.toggle('hidden', panel.id !== 'tab-' + tabId);
+    });
+}
+
+document.querySelectorAll('.dash-tab').forEach((btn) => {
+    btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+});
+
+function renderIdleSync(loanType) {
+    const el = statusDisplay(loanType);
+    el.innerHTML = `
+        <div class="bg-white border border-slate-100 rounded-xl p-5 mb-4 shadow-sm flex flex-col gap-3 relative">
+            <div class="flex items-center justify-between w-full gap-3">
+                <div class="flex items-center min-w-0">
+                    <span class="text-sm font-extrabold text-slate-900">${loanType}</span>
+                </div>
+                <button id="sync-btn-${loanType}" data-loan-type="${loanType}" type="button"
+                        class="sync-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-sm disabled:opacity-50">
+                    Sync ${loanType}
+                </button>
+            </div>
+            <p class="text-xs text-slate-400">${SYNC_BLURBS[loanType] || ''}</p>
+        </div>
+    `;
+    bindSyncButton(loanType);
+}
+
+function bindSyncButton(loanType) {
+    const btn = syncButton(loanType);
+    if (!btn || btn.dataset.bound === '1') return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', () => triggerSync(loanType));
+}
+
 function startSync(loanType) {
     activeSyncs.add(loanType);
     const btn = syncButton(loanType);
-    btn.disabled = true;
-    btn.innerText = 'Processing...';
+    if (btn) {
+        btn.disabled = true;
+    }
 }
 
 function endSync(loanType) {
     activeSyncs.delete(loanType);
     const btn = syncButton(loanType);
-    btn.disabled = false;
-    btn.innerText = 'Sync ' + loanType;
+    if (btn) {
+        btn.disabled = false;
+        btn.innerText = 'Sync ' + loanType;
+        bindSyncButton(loanType);
+    }
 }
 
 function updateBeforeUnload() {
@@ -181,6 +348,21 @@ function updateBeforeUnload() {
         ? (e) => { e.preventDefault(); e.returnValue = ''; }
         : null;
 }
+
+document.body.addEventListener('click', async (event) => {
+    const copyBtn = event.target.closest('.job-id-copy');
+    if (!copyBtn) return;
+    const jobId = copyBtn.dataset.jobId;
+    if (!jobId) return;
+    try {
+        await navigator.clipboard.writeText(jobId);
+        const prev = copyBtn.getAttribute('title');
+        copyBtn.setAttribute('title', 'Copied!');
+        setTimeout(() => copyBtn.setAttribute('title', prev || 'Click to copy Job ID'), 1200);
+    } catch (_) {
+        /* clipboard unavailable */
+    }
+});
 
 document.body.addEventListener('syncComplete', (event) => {
     const loanType = event.detail?.loanType;
@@ -209,7 +391,7 @@ function renderStatusAlert(type, title, message, hint) {
         warning: 'border-amber-200 bg-amber-50 text-amber-800',
     };
     const style = styles[type] || styles.error;
-    return `<div class="border rounded-lg p-4 ${style}">
+    return `<div class="border rounded-xl p-4 ${style}">
         <p class="font-semibold">${title}</p>
         <p class="mt-1 text-sm">${message}</p>
         ${hint ? `<p class="mt-2 text-sm opacity-90">${hint}</p>` : ''}
@@ -230,13 +412,13 @@ function renderProfilingDashboard(data) {
     const generatedAt = data.generated_at || '';
 
     document.getElementById('profiling-kpis').innerHTML = `
-        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <p class="text-xs text-slate-500">Credits</p>
-            <p class="text-xl font-semibold text-slate-800">${formatNumber(totalCredits)}</p>
+        <div class="bg-slate-50 border border-slate-100 rounded-xl p-4">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Credits</p>
+            <p class="text-2xl font-black font-mono text-slate-900 tabular-nums mt-1">${formatNumber(totalCredits)}</p>
         </div>
-        <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <p class="text-xs text-slate-500">Payments</p>
-            <p class="text-xl font-semibold text-slate-800">${formatNumber(totalPayments)}</p>
+        <div class="bg-slate-50 border border-slate-100 rounded-xl p-4">
+            <p class="text-xs font-bold text-slate-400 uppercase tracking-wider">Payments</p>
+            <p class="text-2xl font-black font-mono text-slate-900 tabular-nums mt-1">${formatNumber(totalPayments)}</p>
         </div>
     `;
 
@@ -247,36 +429,70 @@ function renderProfilingDashboard(data) {
     renderNumericTable(data.numerical_fields || {});
     renderCategoricalTable(data.categorical_fields || {});
     renderNullTable(data.summary?.null_fields_distribution || data.charts?.null_fields_distribution || []);
+    renderNullProgress(data.summary?.null_fields_distribution || data.charts?.null_fields_distribution || []);
     renderPaymentStats(data.payments || {});
-    renderProfilingCharts(data);
+}
+
+function renderNullProgress(rows) {
+    const el = document.getElementById('null-progress');
+    if (!rows.length) {
+        el.innerHTML = '<p class="text-sm text-slate-500">No missing-field stats available.</p>';
+        return;
+    }
+
+    const sorted = [...rows]
+        .sort((a, b) => (b.ratio_percent ?? b.ratio * 100) - (a.ratio_percent ?? a.ratio * 100))
+        .slice(0, 12);
+
+    el.innerHTML = sorted.map((row) => {
+        const percent = Number(row.ratio_percent ?? (Number(row.ratio) * 100)) || 0;
+        const name = escapeHtml(fieldLabel(row.field));
+
+        if (percent <= 0) {
+            return `<div class="flex items-center justify-between gap-3">
+                <span class="w-36 text-xs font-bold text-slate-600 truncate" title="${name}">${name}</span>
+                <span class="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-md">✓ PERFECT 0%</span>
+            </div>`;
+        }
+
+        const width = Math.min(100, Math.max(0, percent));
+        const label = formatPercent(row.ratio, row.ratio_percent);
+        return `<div class="flex items-center gap-3">
+            <span class="w-36 text-xs font-bold text-slate-600 truncate" title="${name}">${name}</span>
+            <div class="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div class="bg-amber-500 rounded-full h-2 transition-all" style="width:${width}%"></div>
+            </div>
+            <span class="w-12 text-right font-mono text-xs font-bold text-slate-700">${escapeHtml(label)}</span>
+        </div>`;
+    }).join('');
 }
 
 function renderNumericTable(fields) {
     const entries = Object.entries(fields);
     const el = document.getElementById('numeric-stats');
     if (!entries.length) {
-        el.innerHTML = '<p class="text-slate-500">No numeric stats available.</p>';
+        el.innerHTML = '<p class="text-sm text-slate-500">No numeric stats available.</p>';
         return;
     }
 
-    let html = `<table class="min-w-full">
-        <thead><tr class="text-left border-b bg-slate-50">
-            <th class="py-2 px-3">Field</th>
-            <th class="py-2 px-3">Min</th>
-            <th class="py-2 px-3">Max</th>
-            <th class="py-2 px-3">Avg</th>
-            <th class="py-2 px-3">StdDev</th>
-            <th class="py-2 px-3">Missing %</th>
+    let html = `<table class="w-full text-left border-collapse">
+        <thead><tr>
+            <th class="${thClass()}">Field</th>
+            <th class="${thClass()}">Min</th>
+            <th class="${thClass()}">Max</th>
+            <th class="${thClass()}">Avg</th>
+            <th class="${thClass()}">StdDev</th>
+            <th class="${thClass()}">Missing %</th>
         </tr></thead><tbody>`;
 
     entries.forEach(([field, stats]) => {
-        html += `<tr class="border-b hover:bg-slate-50">
-            <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.min)}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.max)}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.avg)}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.stddev)}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+        html += `<tr>
+            <td class="${tdClass()} whitespace-nowrap">${escapeHtml(fieldLabel(field))}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.min)}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.max)}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.avg)}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.stddev)}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
         </tr>`;
     });
 
@@ -288,26 +504,26 @@ function renderCategoricalTable(fields) {
     const entries = Object.entries(fields);
     const el = document.getElementById('categorical-stats');
     if (!entries.length) {
-        el.innerHTML = '<p class="text-slate-500">No categorical stats available.</p>';
+        el.innerHTML = '<p class="text-sm text-slate-500">No categorical stats available.</p>';
         return;
     }
 
-    let html = `<table class="min-w-full">
-        <thead><tr class="text-left border-b bg-slate-50">
-            <th class="py-2 px-3">Field</th>
-            <th class="py-2 px-3">Unique Values</th>
-            <th class="py-2 px-3">Most Frequent</th>
-            <th class="py-2 px-3">Frequency</th>
-            <th class="py-2 px-3">Missing %</th>
+    let html = `<table class="w-full text-left border-collapse">
+        <thead><tr>
+            <th class="${thClass()}">Field</th>
+            <th class="${thClass()}">Unique</th>
+            <th class="${thClass()}">Most Frequent</th>
+            <th class="${thClass()}">Freq</th>
+            <th class="${thClass()}">Missing %</th>
         </tr></thead><tbody>`;
 
     entries.forEach(([field, stats]) => {
-        html += `<tr class="border-b hover:bg-slate-50">
-            <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.unique_values_count)}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${escapeHtml(stats.most_frequent_value || '—')}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.most_frequent_count)}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+        html += `<tr>
+            <td class="${tdClass()} whitespace-nowrap">${escapeHtml(fieldLabel(field))}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.unique_values_count)}</td>
+            <td class="${tdClass()} whitespace-nowrap">${escapeHtml(stats.most_frequent_value || '—')}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.most_frequent_count)}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
         </tr>`;
     });
 
@@ -318,29 +534,21 @@ function renderCategoricalTable(fields) {
 function renderNullTable(rows) {
     const el = document.getElementById('null-stats');
     if (!rows.length) {
-        el.innerHTML = '<p class="text-slate-500">No null-ratio stats available.</p>';
+        el.innerHTML = '<p class="text-sm text-slate-500">No null-ratio stats available.</p>';
         return;
     }
 
     const sorted = [...rows].sort((a, b) => (b.ratio_percent ?? b.ratio * 100) - (a.ratio_percent ?? a.ratio * 100));
-    let html = `<table class="min-w-full">
-        <thead><tr class="text-left border-b bg-slate-50">
-            <th class="py-2 px-3">Field</th>
-            <th class="py-2 px-3">Missing %</th>
-            <th class="py-2 px-3 w-1/2">Distribution</th>
+    let html = `<table class="w-full text-left border-collapse">
+        <thead><tr>
+            <th class="${thClass()}">Field</th>
+            <th class="${thClass()}">Missing %</th>
         </tr></thead><tbody>`;
 
     sorted.forEach((row) => {
-        const percent = row.ratio_percent ?? (Number(row.ratio) * 100);
-        const width = Math.min(100, Math.max(0, Number(percent) || 0));
-        html += `<tr class="border-b hover:bg-slate-50">
-            <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(row.field))}</td>
-            <td class="py-2 px-3 whitespace-nowrap">${formatPercent(row.ratio, row.ratio_percent)}</td>
-            <td class="py-2 px-3">
-                <div class="h-2 rounded-full bg-slate-200 overflow-hidden">
-                    <div class="h-full bg-amber-500" style="width:${width}%"></div>
-                </div>
-            </td>
+        html += `<tr>
+            <td class="${tdClass()} whitespace-nowrap">${escapeHtml(fieldLabel(row.field))}</td>
+            <td class="${tdClass()} whitespace-nowrap">${formatPercent(row.ratio, row.ratio_percent)}</td>
         </tr>`;
     });
 
@@ -355,49 +563,49 @@ function renderPaymentStats(payments) {
     const categorical = Object.entries(payments.categorical_fields || {});
 
     if (!total && !numeric.length && !categorical.length) {
-        el.innerHTML = '<p class="text-slate-500">No payment stats available.</p>';
+        el.innerHTML = '<p class="text-sm text-slate-500">No payment stats available.</p>';
         return;
     }
 
-    let html = `<p class="text-sm text-slate-600 mb-3">${formatNumber(total)} payment installments</p>`;
+    let html = `<p class="text-xs text-slate-500 mb-3 font-mono tabular-nums">${formatNumber(total)} payment installments</p>`;
 
     if (numeric.length) {
-        html += `<table class="min-w-full mb-4">
-            <thead><tr class="text-left border-b bg-slate-50">
-                <th class="py-2 px-3">Field</th>
-                <th class="py-2 px-3">Min</th>
-                <th class="py-2 px-3">Max</th>
-                <th class="py-2 px-3">Avg</th>
-                <th class="py-2 px-3">StdDev</th>
-                <th class="py-2 px-3">Missing %</th>
+        html += `<table class="w-full text-left border-collapse mb-4">
+            <thead><tr>
+                <th class="${thClass()}">Field</th>
+                <th class="${thClass()}">Min</th>
+                <th class="${thClass()}">Max</th>
+                <th class="${thClass()}">Avg</th>
+                <th class="${thClass()}">StdDev</th>
+                <th class="${thClass()}">Missing %</th>
             </tr></thead><tbody>`;
         numeric.forEach(([field, stats]) => {
-            html += `<tr class="border-b hover:bg-slate-50">
-                <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.min)}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.max)}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.avg)}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.stddev)}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+            html += `<tr>
+                <td class="${tdClass()} whitespace-nowrap">${escapeHtml(fieldLabel(field))}</td>
+                <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.min)}</td>
+                <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.max)}</td>
+                <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.avg)}</td>
+                <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.stddev)}</td>
+                <td class="${tdClass()} whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
             </tr>`;
         });
         html += '</tbody></table>';
     }
 
     if (categorical.length) {
-        html += `<table class="min-w-full">
-            <thead><tr class="text-left border-b bg-slate-50">
-                <th class="py-2 px-3">Field</th>
-                <th class="py-2 px-3">Unique Values</th>
-                <th class="py-2 px-3">Most Frequent</th>
-                <th class="py-2 px-3">Missing %</th>
+        html += `<table class="w-full text-left border-collapse">
+            <thead><tr>
+                <th class="${thClass()}">Field</th>
+                <th class="${thClass()}">Unique</th>
+                <th class="${thClass()}">Most Frequent</th>
+                <th class="${thClass()}">Missing %</th>
             </tr></thead><tbody>`;
         categorical.forEach(([field, stats]) => {
-            html += `<tr class="border-b hover:bg-slate-50">
-                <td class="py-2 px-3 whitespace-nowrap font-medium">${escapeHtml(fieldLabel(field))}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${formatNumber(stats.unique_values_count)}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${escapeHtml(stats.most_frequent_value || '—')}</td>
-                <td class="py-2 px-3 whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
+            html += `<tr>
+                <td class="${tdClass()} whitespace-nowrap">${escapeHtml(fieldLabel(field))}</td>
+                <td class="${tdClass()} whitespace-nowrap">${formatNumber(stats.unique_values_count)}</td>
+                <td class="${tdClass()} whitespace-nowrap">${escapeHtml(stats.most_frequent_value || '—')}</td>
+                <td class="${tdClass()} whitespace-nowrap">${formatPercent(stats.null_ratio, stats.null_ratio_percent)}</td>
             </tr>`;
         });
         html += '</tbody></table>';
@@ -406,105 +614,44 @@ function renderPaymentStats(payments) {
     el.innerHTML = html;
 }
 
-function renderProfilingCharts(data) {
-    const statusDist = data.charts?.categorical_distributions?.loan_status_code || [];
-    const statusCtx = document.getElementById('statusChart').getContext('2d');
-    if (statusChart) statusChart.destroy();
-    statusChart = new Chart(statusCtx, {
-        type: 'bar',
-        data: {
-            labels: statusDist.map(d => d.value),
-            datasets: [{ label: 'Loan Status', data: statusDist.map(d => d.count), backgroundColor: '#3b82f6' }]
-        },
-        options: { responsive: true, plugins: { title: { display: true, text: 'Loan Status Distribution' } } }
+function filteredCredits() {
+    const query = (document.getElementById('ledger-search').value || '').trim().toLowerCase();
+    if (!query) {
+        return lastCredits;
+    }
+    return lastCredits.filter((credit) => {
+        const account = String(credit.loan_account_number ?? '').toLowerCase();
+        const customer = String(credit.customer_id ?? '').toLowerCase();
+        return account.includes(query) || customer.includes(query);
     });
-
-    const numFields = data.numerical_fields?.original_loan_amount || {};
-    const amountCtx = document.getElementById('amountChart').getContext('2d');
-    if (amountChart) amountChart.destroy();
-    amountChart = new Chart(amountCtx, {
-        type: 'bar',
-        data: {
-            labels: ['Min', 'Avg', 'Max', 'StdDev'],
-            datasets: [{
-                label: 'Original Loan Amount',
-                data: [numFields.min ?? 0, numFields.avg ?? 0, numFields.max ?? 0, numFields.stddev ?? 0],
-                backgroundColor: '#10b981'
-            }]
-        },
-        options: { responsive: true, plugins: { title: { display: true, text: 'Loan Amount Stats' } } }
-    });
-
-    const nullDist = (data.charts?.null_fields_distribution || data.summary?.null_fields_distribution || [])
-        .slice()
-        .sort((a, b) => (b.ratio_percent ?? b.ratio * 100) - (a.ratio_percent ?? a.ratio * 100))
-        .slice(0, 10);
-    const nullCtx = document.getElementById('nullChart').getContext('2d');
-    if (nullChart) nullChart.destroy();
-    nullChart = new Chart(nullCtx, {
-        type: 'bar',
-        data: {
-            labels: nullDist.map(d => fieldLabel(d.field)),
-            datasets: [{
-                label: 'Missing %',
-                data: nullDist.map(d => d.ratio_percent ?? (Number(d.ratio) * 100)),
-                backgroundColor: '#f59e0b'
-            }]
-        },
-        options: {
-            indexAxis: 'y',
-            responsive: true,
-            plugins: { title: { display: true, text: 'Top Missing Fields' } },
-            scales: { x: { beginAtZero: true, max: 100 } }
-        }
-    });
-}
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 function renderCreditTable(credits) {
     if (!credits.length) {
-        return '<p class="text-slate-500">No data synced yet.</p>';
+        return '<p class="p-4 text-sm text-slate-500">No data synced yet.</p>';
     }
 
-    const headers = [
-        ['loan_account_number', 'Account'],
-        ['customer_id', 'Customer'],
-        ['customer_type', 'Type'],
-        ['loan_status_code', 'Status'],
-        ['days_past_due', 'DPD'],
-        ['original_loan_amount', 'Original Amount'],
-        ['outstanding_principal_balance', 'Outstanding'],
-        ['nominal_interest_rate', 'Rate'],
-        ['final_maturity_date', 'Maturity'],
-        ['loan_start_date', 'Start Date'],
-        ['total_installment_count', 'Installments'],
-        ['internal_rating', 'Int. Rating'],
-        ['external_rating', 'Ext. Rating'],
-    ];
-
-    let html = '<table class="min-w-full"><thead><tr class="text-left border-b bg-slate-50">';
-    headers.forEach(([, label]) => {
-        html += `<th class="py-2 px-3 whitespace-nowrap">${label}</th>`;
+    let html = '<table class="w-full text-left border-collapse"><thead><tr>';
+    CREDIT_HEADERS.forEach(([, label]) => {
+        html += `<th class="sticky top-0 bg-slate-900 text-white text-xs font-bold shadow-md z-10 px-3 py-2.5 whitespace-nowrap text-left">${label}</th>`;
     });
     html += '</tr></thead><tbody>';
 
     credits.forEach((credit) => {
-        html += '<tr class="border-b hover:bg-slate-50">';
-        headers.forEach(([key]) => {
-            html += `<td class="py-2 px-3 whitespace-nowrap">${escapeHtml(credit[key])}</td>`;
+        html += '<tr class="hover:bg-slate-50/80">';
+        CREDIT_HEADERS.forEach(([key]) => {
+            html += `<td class="px-3 py-2.5 whitespace-nowrap font-mono text-xs tabular-nums text-slate-700 border-b border-slate-100 text-left">${escapeHtml(credit[key])}</td>`;
         });
         html += '</tr>';
     });
 
     html += '</tbody></table>';
     return html;
+}
+
+function renderFilteredLedger() {
+    const credits = filteredCredits();
+    document.getElementById('data-table').innerHTML = renderCreditTable(credits);
 }
 
 function renderCreditPagination(pagination) {
@@ -518,19 +665,19 @@ function renderCreditPagination(pagination) {
     const nextPage = pagination.page + 1;
 
     return `
-        <p class="text-sm text-slate-600">
+        <p class="text-xs font-mono tabular-nums text-slate-500">
             Showing ${start}-${end} of ${pagination.total_count} credits
         </p>
         <div class="flex items-center gap-2">
             <button type="button" data-credit-page="${prevPage}"
                     ${pagination.has_previous ? '' : 'disabled'}
-                    class="px-3 py-1 border rounded text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">
+                    class="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-all">
                 Previous
             </button>
-            <span class="text-sm text-slate-600">Page ${pagination.page} of ${pagination.total_pages}</span>
+            <span class="text-xs text-slate-500">Page ${pagination.page} of ${pagination.total_pages}</span>
             <button type="button" data-credit-page="${nextPage}"
                     ${pagination.has_next ? '' : 'disabled'}
-                    class="px-3 py-1 border rounded text-sm disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50">
+                    class="px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50 transition-all">
                 Next
             </button>
         </div>
@@ -544,7 +691,7 @@ async function loadData(page) {
     const tableEl = document.getElementById('data-table');
     const paginationEl = document.getElementById('data-pagination');
 
-    tableEl.innerHTML = `<p class="text-slate-500">Loading page ${targetPage}...</p>`;
+    tableEl.innerHTML = `<p class="p-4 text-sm text-slate-500">Loading page ${targetPage}...</p>`;
 
     const res = await fetch(
         '/api/data?loan_type=' + encodeURIComponent(loanType) +
@@ -554,6 +701,7 @@ async function loadData(page) {
     );
 
     if (!res.ok) {
+        lastCredits = [];
         tableEl.innerHTML = renderStatusAlert('error', 'Could not load credits', 'Failed to fetch page ' + targetPage + '.', null);
         paginationEl.innerHTML = '';
         return;
@@ -561,7 +709,7 @@ async function loadData(page) {
 
     const data = await res.json();
     const pagination = data.pagination || {};
-    const credits = data.credits || [];
+    lastCredits = data.credits || [];
 
     if (pagination.page) {
         creditPage = pagination.page;
@@ -571,8 +719,37 @@ async function loadData(page) {
         ? `${pagination.total_count} total credits${data.extraction_date ? ' · extracted ' + data.extraction_date : ''}`
         : 'No synced credits for this loan type';
 
-    tableEl.innerHTML = renderCreditTable(credits);
+    renderFilteredLedger();
     paginationEl.innerHTML = renderCreditPagination(pagination);
+}
+
+function exportCreditsCsv() {
+    const credits = filteredCredits();
+    if (!credits.length) {
+        return;
+    }
+
+    const headers = CREDIT_HEADERS.map(([key]) => key);
+    const labels = CREDIT_HEADERS.map(([, label]) => label);
+    const lines = [labels.join(',')];
+
+    credits.forEach((credit) => {
+        const row = headers.map((key) => {
+            const raw = credit[key] ?? '';
+            const value = String(raw).replace(/"/g, '""');
+            return /[",\n]/.test(value) ? `"${value}"` : value;
+        });
+        lines.push(row.join(','));
+    });
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const loanType = document.getElementById('loan').value;
+    link.href = url;
+    link.download = `credit_snapshot_${loanType}_page${creditPage}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
 }
 
 function attachJobStatus(loanType, jobId) {
@@ -610,12 +787,21 @@ async function triggerSync(loanType) {
         return;
     }
     if (!res.ok) {
-        statusDisplay(loanType).innerHTML = renderStatusAlert(
-            'error',
-            'Could not start sync',
-            data.error || 'Sync failed to start.',
-            null
-        );
+        statusDisplay(loanType).innerHTML = `
+            <div class="bg-white border border-rose-100 rounded-xl p-5 mb-4 shadow-sm flex flex-col gap-3 relative">
+                <div class="flex items-center justify-between w-full gap-3">
+                    <div class="flex items-center">
+                        <span class="text-sm font-extrabold text-slate-900">${loanType}</span>
+                        <span class="bg-rose-50 text-rose-700 border border-rose-200/60 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ml-2">Error</span>
+                    </div>
+                    <button id="sync-btn-${loanType}" data-loan-type="${loanType}" type="button"
+                            class="sync-btn bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-sm">
+                        Sync ${loanType}
+                    </button>
+                </div>
+                ${renderStatusAlert('error', 'Could not start sync', data.error || 'Sync failed to start.', null)}
+            </div>
+        `;
         endSync(loanType);
         updateBeforeUnload();
         return;
@@ -628,8 +814,10 @@ async function triggerSync(loanType) {
     });
 }
 
+window.triggerSync = triggerSync;
+
 LOAN_TYPES.forEach((loanType) => {
-    syncButton(loanType).addEventListener('click', () => triggerSync(loanType));
+    bindSyncButton(loanType);
     resumeActiveSync(loanType);
 });
 
@@ -643,6 +831,9 @@ document.body.addEventListener('click', (event) => {
 });
 
 document.getElementById('refresh-charts').addEventListener('click', () => { loadProfiling(); loadData(1); });
+document.getElementById('refresh-ledger').addEventListener('click', () => loadData(creditPage));
+document.getElementById('export-csv').addEventListener('click', exportCreditsCsv);
+document.getElementById('ledger-search').addEventListener('input', renderFilteredLedger);
 document.getElementById('loan').addEventListener('change', () => { creditPage = 1; loadProfiling(); loadData(1); });
 loadProfiling();
 loadData(1);

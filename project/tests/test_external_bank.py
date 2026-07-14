@@ -127,6 +127,63 @@ class ExternalBankAPITestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
 
+    def test_portal_page_renders(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Upload CSV Data")
+        self.assertContains(response, "Stored Portfolios")
+
+    def test_download_credits_csv(self):
+        self._upload()
+        response = self.client.get(
+            "/api/bank/download/credits",
+            {"tenant_id": "BANK001", "loan_type": "RETAIL", "format": "csv"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/csv", response["Content-Type"])
+        self.assertEqual(b"".join(response.streaming_content), self.credit_content)
+
+    def test_download_credits_json(self):
+        self._upload()
+        response = self.client.get(
+            "/api/bank/download/credits",
+            {"tenant_id": "BANK001", "loan_type": "RETAIL", "format": "json"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertEqual(
+            response.json(),
+            [
+                {"loan_id": "L001", "amount": "1000.00"},
+                {"loan_id": "L002", "amount": "2000.00"},
+            ],
+        )
+
+    def test_download_rejects_invalid_format(self):
+        self._upload()
+        response = self.client.get(
+            "/api/bank/download/credits",
+            {"tenant_id": "BANK001", "loan_type": "RETAIL", "format": "xml"},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_download_payments_csv(self):
+        self._upload()
+        response = self.client.get(
+            "/api/bank/download/payments",
+            {"tenant_id": "BANK001", "loan_type": "RETAIL"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), self.payment_content)
+
+    def test_download_missing_returns_404(self):
+        response = self.client.get(
+            "/api/bank/download/credits",
+            {"tenant_id": "BANK002", "loan_type": "COMMERCIAL"},
+        )
+        self.assertEqual(response.status_code, 404)
+
 
 if __name__ == "__main__":
     import unittest

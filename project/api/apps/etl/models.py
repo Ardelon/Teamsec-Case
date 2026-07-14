@@ -8,12 +8,14 @@ class ETLJob(models.Model):
     STATUS_PROCESSING = "PROCESSING"
     STATUS_COMPLETED = "COMPLETED"
     STATUS_FAILED = "FAILED"
+    STATUS_CANCELLED = "CANCELLED"
 
     STATUS_CHOICES = [
         (STATUS_QUEUED, "Queued"),
         (STATUS_PROCESSING, "Processing"),
         (STATUS_COMPLETED, "Completed"),
         (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
     ]
 
     job_id = models.CharField(max_length=64, unique=True)

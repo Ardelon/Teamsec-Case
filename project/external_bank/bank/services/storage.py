@@ -38,6 +38,29 @@ def _write_uploaded_file(uploaded_file, destination: Path) -> int:
     return size
 
 
+def list_portfolios() -> list[dict]:
+    portfolios = []
+    for tenant_id in TENANT_IDS:
+        for loan_type in LOAN_TYPES:
+            credits = credits_path(tenant_id, loan_type)
+            payments = payments_path(tenant_id, loan_type)
+            has_credits = credits.exists()
+            has_payments = payments.exists()
+            if not has_credits and not has_payments:
+                continue
+            portfolios.append(
+                {
+                    "tenant_id": tenant_id,
+                    "loan_type": loan_type,
+                    "has_credits": has_credits,
+                    "has_payments": has_payments,
+                    "credits_size_bytes": credits.stat().st_size if has_credits else 0,
+                    "payments_size_bytes": payments.stat().st_size if has_payments else 0,
+                }
+            )
+    return portfolios
+
+
 def validate_tenant_id(tenant_id: str) -> str | None:
     if tenant_id not in TENANT_IDS:
         return f"Invalid tenant_id. Must be one of: {', '.join(TENANT_IDS)}"

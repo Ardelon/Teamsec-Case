@@ -7,6 +7,7 @@ from django.utils import timezone as dj_timezone
 
 from apps.core.services.redis_lock import get_redis_client, release_sync_lock
 from apps.etl.models import ETLJob
+from apps.etl.services.cancel_sync import clear_cancel_flags, is_cancel_requested
 
 
 def _database_url() -> str:
@@ -96,6 +97,11 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
     redis_client = get_redis_client()
     job = ETLJob.objects.get(job_id=job_id)
 
+    if job.status == ETLJob.STATUS_CANCELLED or is_cancel_requested(job_id):
+        release_sync_lock(redis_client, tenant_id, loan_type, job_id)
+        clear_cancel_flags(job_id)
+        return {"cancelled": True}
+
     try:
         import adapter_core
 
@@ -108,6 +114,9 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
         )
         _update_job_state(redis_client, job)
 
+        if is_cancel_requested(job_id):
+            return {"cancelled": True}
+
         credits_url, payments_url = _bank_urls(tenant_id, loan_type)
         result = adapter_core.execute_etl_pipeline(
             job_id,
@@ -118,6 +127,10 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
             _database_url(),
             _make_progress_callback(job, redis_client),
         )
+
+        job.refresh_from_db()
+        if job.status == ETLJob.STATUS_CANCELLED or is_cancel_requested(job_id):
+            return {"cancelled": True}
 
         errors = _serialize_error_logs(result.error_logs)
         error_count = len(errors)
@@ -153,6 +166,9 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
             "errors": errors,
         }
     except Exception as exc:
+        job.refresh_from_db()
+        if job.status == ETLJob.STATUS_CANCELLED or is_cancel_requested(job_id):
+            return {"cancelled": True}
         error = {"row_number": 0, "field": "pipeline", "error_type": "PIPELINE_ERROR", "message": str(exc), "error_message": str(exc)}
         _update_job(
             job,
@@ -166,3 +182,4 @@ def run_etl_pipeline(self, job_id: str, tenant_id: str, loan_type: str):
         raise
     finally:
         release_sync_lock(redis_client, tenant_id, loan_type, job_id)
+        clear_cancel_flags(job_id)

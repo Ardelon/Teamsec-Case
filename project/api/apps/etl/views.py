@@ -10,6 +10,7 @@ from apps.core.permissions import TenantScopedPermission
 from apps.core.services.redis_lock import acquire_sync_lock, get_active_job_id, get_redis_client
 from apps.etl.models import ETLJob
 from apps.etl.serializers import JobStatusSerializer, SyncRequestSerializer, SyncResponseSerializer, new_job_id
+from apps.etl.services.cancel_sync import cancel_sync_job, store_celery_task_id
 from apps.etl.services.profiling import build_profiling_payload
 from apps.etl.services.sync_messages import humanize_sync_error
 from apps.etl.services.warehouse import get_data_snapshot
@@ -47,10 +48,12 @@ def _forbidden_if_tenant_mismatch(request: Request) -> Response | None:
 
 def _sync_status_context(job: ETLJob) -> dict:
     sync_error = None
-    if job.status == ETLJob.STATUS_FAILED and job.errors:
+    if job.status in {ETLJob.STATUS_FAILED, ETLJob.STATUS_CANCELLED} and job.errors:
         first_error = job.errors[0]
         raw_message = first_error.get("message") or first_error.get("error_message") or ""
         sync_error = humanize_sync_error(raw_message, job.tenant_id, job.loan_type)
+    elif job.status == ETLJob.STATUS_CANCELLED:
+        sync_error = humanize_sync_error("Sync cancelled by user", job.tenant_id, job.loan_type)
     return {"job": job, "sync_error": sync_error}
 
 
@@ -99,7 +102,8 @@ def sync_data(request: Request):
         loan_type=loan_type,
         status=ETLJob.STATUS_QUEUED,
     )
-    run_etl_pipeline.delay(job_id, tenant_id, loan_type)
+    async_result = run_etl_pipeline.delay(job_id, tenant_id, loan_type)
+    store_celery_task_id(job_id, async_result.id)
 
     if request.headers.get("HX-Request") == "true":
         return render(request, "partials/sync_status.html", _sync_status_context(job))
@@ -146,6 +150,32 @@ def sync_status(request: Request, job_id: str):
 
     if job.tenant_id != _tenant_from_request(request):
         return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+    if request.headers.get("HX-Request") == "true":
+        return render(request, "partials/sync_status.html", _sync_status_context(job))
+
+    return Response(JobStatusSerializer(job).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, TenantScopedPermission])
+def cancel_sync(request: Request, job_id: str):
+    mismatch = _forbidden_if_tenant_mismatch(request)
+    if mismatch:
+        return mismatch
+
+    try:
+        job = ETLJob.objects.get(job_id=job_id)
+    except ETLJob.DoesNotExist:
+        return Response({"error": "Job not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    if job.tenant_id != _tenant_from_request(request):
+        return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        job = cancel_sync_job(job)
+    except ValueError as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     if request.headers.get("HX-Request") == "true":
         return render(request, "partials/sync_status.html", _sync_status_context(job))

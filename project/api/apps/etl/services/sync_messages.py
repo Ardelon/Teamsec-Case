@@ -6,6 +6,14 @@ def humanize_sync_error(message: str, tenant_id: str = "", loan_type: str = "") 
     tenant = tenant_id or "your bank"
     loan = loan_type or "the selected loan type"
 
+    if "cancelled by user" in text.lower() or text == "Sync cancelled by user":
+        return {
+            "title": "Sync cancelled",
+            "message": "The sync job was cancelled before it finished.",
+            "hint": "You can start a new sync whenever you want.",
+            "code": "CANCELLED",
+        }
+
     if "No credits.csv found" in text:
         return {
             "title": "No credit data to sync",
