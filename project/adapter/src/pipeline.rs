@@ -24,8 +24,10 @@ pub struct ProgressState<'a> {
 impl<'a> ProgressState<'a> {
     pub fn emit(&self, py: Python, processed_rows: u64, progress_percentage: u8) -> PyResult<()> {
         if let Some(callback) = self.callback {
-            let errors: Vec<(u32, String, String, String)> = self
-                .errors
+            // Cap payload size — cloning all errors into Python every tick dominated runtime.
+            const MAX_PROGRESS_ERRORS: usize = 50;
+            let start = self.errors.len().saturating_sub(MAX_PROGRESS_ERRORS);
+            let errors: Vec<(u32, String, String, String)> = self.errors[start..]
                 .iter()
                 .map(|e| {
                     (
@@ -197,9 +199,16 @@ pub async fn run_pipeline(
     let loan_type_upper = loan_type.to_uppercase();
     let mut error_logs = Vec::new();
     let mut profiler = WelfordProfiler::new();
-    let mut valid_credits = Vec::new();
     let mut known_accounts = HashSet::new();
     let mut processed_rows = 0u64;
+
+    let (mut db_client, _connection_task) = open_database_client(&database_url)
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    let mut writer = SnapshotWriter::begin(&mut db_client, &tenant_id, &loan_type_upper)
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
 
     let mut credit_stream = JsonRowStream::open(&http_client, &bank_credits_url)
         .await
@@ -222,11 +231,14 @@ pub async fn run_pipeline(
                 profiler.observe(None);
             }
             known_accounts.insert(credit.loan_account_number.clone());
-            valid_credits.push(credit);
+            writer
+                .push_credit(credit)
+                .await
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         }
 
         processed_rows += 1;
-        if row_number % 500 == 0 {
+        if row_number % 2_000 == 0 {
             let state = ProgressState {
                 callback: &on_progress,
                 total_rows: processed_rows,
@@ -237,7 +249,12 @@ pub async fn run_pipeline(
         }
     }
 
-    let credit_count = valid_credits.len() as u64;
+    writer
+        .flush_credits()
+        .await
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+    let credit_count = writer.credits_ingested();
     {
         let state = ProgressState {
             callback: &on_progress,
@@ -247,22 +264,6 @@ pub async fn run_pipeline(
         };
         state.emit(py, processed_rows, 40)?;
     }
-
-    let (mut db_client, _connection_task) = open_database_client(&database_url)
-        .await
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-    let mut writer = SnapshotWriter::begin(&mut db_client, &tenant_id, &loan_type_upper)
-        .await
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-    writer
-        .insert_credits(&valid_credits)
-        .await
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-    valid_credits.clear();
-    valid_credits.shrink_to_fit();
 
     let mut payment_stream = JsonRowStream::open(&http_client, &bank_payments_url)
         .await
@@ -282,7 +283,7 @@ pub async fn run_pipeline(
         }
 
         processed_rows += 1;
-        if row_number % 1000 == 0 {
+        if row_number % 2_000 == 0 {
             let state = ProgressState {
                 callback: &on_progress,
                 total_rows: processed_rows,

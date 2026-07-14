@@ -81,15 +81,9 @@
         </div>
 
         <div class="lg:col-span-7 bg-white border border-slate-100 rounded-2xl p-6 shadow-sm">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h2 class="text-sm font-black text-slate-900 tracking-tight">Core Overview</h2>
-                    <p class="text-xs text-slate-400 mt-0.5">Summary metrics for the selected loan type.</p>
-                </div>
-                <button id="refresh-charts" type="button"
-                        class="text-xs font-bold text-slate-400 hover:text-slate-600 border border-slate-200 rounded-lg px-2.5 py-1.5 transition-all bg-white shadow-sm">
-                    Refresh Stats
-                </button>
+            <div>
+                <h2 class="text-sm font-black text-slate-900 tracking-tight">Core Overview</h2>
+                <p class="text-xs text-slate-400 mt-0.5">Summary metrics for the selected loan type.</p>
             </div>
             <div class="mt-4">
                 <label class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5 block" for="loan">Loan type</label>
@@ -830,11 +824,16 @@ document.body.addEventListener('click', (event) => {
     loadData(Number(button.dataset.creditPage));
 });
 
-document.getElementById('refresh-charts').addEventListener('click', () => { loadProfiling(); loadData(1); });
 document.getElementById('refresh-ledger').addEventListener('click', () => loadData(creditPage));
 document.getElementById('export-csv').addEventListener('click', exportCreditsCsv);
 document.getElementById('ledger-search').addEventListener('input', renderFilteredLedger);
-document.getElementById('loan').addEventListener('change', () => { creditPage = 1; loadProfiling(); loadData(1); });
+document.getElementById('loan').addEventListener('change', () => {
+    creditPage = 1;
+    const search = document.getElementById('ledger-search');
+    if (search) search.value = '';
+    loadProfiling();
+    loadData(1);
+});
 loadProfiling();
 loadData(1);
 </script>

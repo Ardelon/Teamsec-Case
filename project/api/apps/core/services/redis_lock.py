@@ -19,7 +19,8 @@ def lock_key(tenant_id: str, loan_type: str) -> str:
 
 
 def acquire_sync_lock(client: redis.Redis, tenant_id: str, loan_type: str, job_id: str) -> bool:
-    return bool(client.set(lock_key(tenant_id, loan_type), job_id, nx=True, ex=600))
+    # Long ETL runs need a lock that survives multi-hour jobs.
+    return bool(client.set(lock_key(tenant_id, loan_type), job_id, nx=True, ex=14400))
 
 
 def get_active_job_id(client: redis.Redis, tenant_id: str, loan_type: str) -> str | None:

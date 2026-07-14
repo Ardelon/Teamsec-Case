@@ -118,6 +118,7 @@ services:
       CELERY_RESULT_BACKEND: redis://redis_broker:6379/1
       EXTERNAL_BANK_URL: http://externalbank:8080
       PYTHONPATH: /app/api
+      CELERY_CONCURRENCY: ${CELERY_CONCURRENCY:-6}
     volumes:
       - ./api:/app/api
       - ./adapter:/app/adapter
@@ -130,7 +131,10 @@ services:
         condition: service_healthy
       core_backend_api:
         condition: service_started
-    command: celery -A config worker --loglevel=info --concurrency=1
+    command: >
+      celery -A config worker --loglevel=info
+      --concurrency=${CELERY_CONCURRENCY:-6}
+      --prefetch-multiplier=1
 
 networks:
   teamsec_network:
