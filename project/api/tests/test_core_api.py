@@ -1,5 +1,6 @@
-from types import SimpleNamespace
-from unittest.mock import patch
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth.models import User
 from django.test import TestCase, override_settings
@@ -9,6 +10,12 @@ from apps.core.models import OperatorProfile
 from apps.core.services.redis_lock import acquire_sync_lock, get_active_job_id, get_redis_client, release_sync_lock
 from apps.etl.models import ETLJob
 from apps.etl.tasks import run_etl_pipeline
+
+# CI does not Maturin-build adapter_core; stub so @patch("adapter_core...") resolves.
+if "adapter_core" not in sys.modules:
+    _adapter_stub = ModuleType("adapter_core")
+    _adapter_stub.execute_etl_pipeline = MagicMock()
+    sys.modules["adapter_core"] = _adapter_stub
 
 
 class _MockMetrics(SimpleNamespace):
