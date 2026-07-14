@@ -14,6 +14,23 @@ Containerized Python/Django gateway with a Rust-native ETL adapter, fake externa
 
 All services communicate over the internal `teamsec_network` Docker bridge.
 
+## Multi-Tenancy Design
+
+**Pattern:** shared database, shared schema, row-level tenancy by `tenant_id` (demo IDs: `BANK001`, `BANK002`, `BANK003`).
+
+How isolation works:
+
+- Operators bind to a tenant at login (`OperatorProfile`); `tenant_id` is stored in the HttpOnly session / JWT claims.
+- Sync, data, and profiling scope to `request.user.tenant_id` — the client is not the source of truth for tenant.
+- `TenantScopedPermission` rejects body/query `tenant_id` values that do not match the auth claim.
+- Warehouse rows and ETL jobs carry `tenant_id`; snapshot replace and Redis locks use the slice `tenant_id` + `loan_type`.
+
+**Why this model for the case:**
+
+- All banks share one gateway, Celery pool, Rust adapter, and warehouse — schema- or DB-per-tenant would add ops cost without changing the product surface.
+- The ETL unit of work is already a tenant+loan_type slice (delete/insert + `lock:{tenant_id}:{loan_type}`), so row-level tenancy maps directly to sync concurrency and storage.
+- Claim-bound tenant context gives logical isolation suitable for a shared ETL platform demo; stronger physical isolation (RLS, schema-per-tenant, dedicated DB) can be layered later without changing the API contract.
+
 ## Quick Start
 
 ```bash
@@ -55,8 +72,21 @@ Valid `loan_type` values: `RETAIL`, `COMMERCIAL`.
 - Upload CSV portfolio: `POST /api/bank/upload`
 - Export credits (JSON stream): `GET /api/bank/export/credits?tenant_id=BANK001&loan_type=RETAIL`
 - Export payments (JSON stream): `GET /api/bank/export/payments?tenant_id=BANK001&loan_type=RETAIL`
+- Download credits: `GET /api/bank/download/credits?tenant_id=BANK001&loan_type=RETAIL&format=csv|json`
+- Download payments: `GET /api/bank/download/payments?tenant_id=BANK001&loan_type=RETAIL&format=csv|json`
 
 Bank APIs are intentionally unauthenticated for local simulation.
+
+## Postman collections
+
+Import these into Postman to explore every endpoint with demo variables pre-filled:
+
+| Service | Collection file | Base URL |
+|---------|-----------------|----------|
+| Gateway (`core_backend_api`) | [`api/core_backend_api.postman_collection.json`](./api/core_backend_api.postman_collection.json) | `http://localhost:8000` |
+| Bank simulator (`external_bank`) | [`external_bank/external_bank.postman_collection.json`](./external_bank/external_bank.postman_collection.json) | `http://localhost:8080` |
+
+**Quick path:** Login → Trigger Sync → Sync Status → Data Snapshot / Profiling (gateway). Upload Portfolio → Export Credits / Payments (bank).
 
 ## Environment Variables
 
@@ -101,7 +131,5 @@ cd external_bank && python -m pytest ../tests/test_external_bank.py -v && cd ..
 ```
 
 CI (`.github/workflows/ci.yml`) runs Rust `cargo test --lib` and Django API tests with Postgres + Redis. Bank pytest and adapter smoke are local.
-
-API tooling: Postman collection at `api/core_backend_api.postman_collection.json`.
 
 See [Architecture.md](./Architecture.md) for the full system design map.
