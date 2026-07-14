@@ -75,6 +75,7 @@ Default Django/JWT secret keys in Compose are demo-only — do not use outside l
 
 - Demo secrets, `DEBUG`, and open bank simulator are for local demos only.
 - Bank export/upload APIs are intentionally unauthenticated.
+- Sync uses Redis slice locks `lock:{tenant_id}:{loan_type}` (TTL 14400s / 4h). Parallel syncs are allowed across loan types for the same tenant.
 - Sync cancel is cooperative: the progress callback polls a Redis cancel flag and Rust aborts before commit. Celery soft-revokes queued tasks; **PROCESSING** jobs keep the Redis slice lock until the worker exits so a re-sync cannot overwrite mid-rollback.
 - API tests expect reachable Redis and Postgres (as configured in settings).
 - The API image builds the Rust adapter for a shared Dockerfile layout; only the worker needs `adapter_core` at runtime.
@@ -93,11 +94,15 @@ cd adapter && cargo test --lib && cd ..
 # API orchestration tests (needs Redis + Postgres)
 cd api && python manage.py test tests -v 2 && cd ..
 
-# Bank simulator tests (from project root)
+# Bank simulator tests (local only — not in CI)
 cd external_bank && python -m pytest ../tests/test_external_bank.py -v && cd ..
 
 # Optional smoke (adapter_core installed):
 # pytest tests/test_rust_adapter.py -v
 ```
+
+CI (`.github/workflows/ci.yml`) runs Rust `cargo test --lib` and Django API tests with Postgres + Redis. Bank pytest and adapter smoke are local.
+
+API tooling: Postman collection at `api/core_backend_api.postman_collection.json`.
 
 See [Architecture.md](./Architecture.md) for the full system design map.
